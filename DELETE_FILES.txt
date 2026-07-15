@@ -1,0 +1,1 @@
+backend/src/main/java/com/realtimetilegame/room/application/dto/RoomStartAccepted.java
