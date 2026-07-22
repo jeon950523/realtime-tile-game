@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: realtime-tile-game
+  labels:
+    app.kubernetes.io/name: realtime-tile-game
+    app.kubernetes.io/part-of: realtime-tile-game
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: realtime-tile-game
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: realtime-tile-game
+        app.kubernetes.io/part-of: realtime-tile-game
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-mysql
+          image: mysql:8.4.10
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until mysql -h mysql -u"${MYSQL_USER}" --silent --skip-column-names -e 'SELECT 1' >/dev/null 2>&1; do
+                echo "Waiting for MySQL service and application credentials..."
+                sleep 2
+              done
+          env:
+            - name: MYSQL_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: MYSQL_USER
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: realtime-tile-game-secret
+                  key: MYSQL_PASSWORD
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+      containers:
+        - name: backend
+          image: realtime-tile-game-backend:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: DB_URL
+            - name: DB_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: realtime-tile-game-secret
+                  key: MYSQL_PASSWORD
+            - name: DB_POOL_MAX_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: DB_POOL_MAX_SIZE
+            - name: DB_POOL_MIN_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: DB_POOL_MIN_IDLE
+            - name: SERVER_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: SERVER_PORT
+            - name: CORS_ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: CORS_ALLOWED_ORIGINS
+            - name: JWT_ACCESS_SECRET_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: realtime-tile-game-secret
+                  key: JWT_ACCESS_SECRET_BASE64
+            - name: JWT_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: JWT_ISSUER
+            - name: JWT_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: JWT_AUDIENCE
+            - name: JWT_ACCESS_TOKEN_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: JWT_ACCESS_TOKEN_TTL_SECONDS
+            - name: AUTH_REFRESH_TOKEN_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: AUTH_REFRESH_TOKEN_TTL_SECONDS
+            - name: AUTH_REFRESH_COOKIE_SECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: AUTH_REFRESH_COOKIE_SECURE
+            - name: AUTH_REFRESH_COOKIE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: AUTH_REFRESH_COOKIE_NAME
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: realtime-tile-game-config
+                  key: TZ
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi

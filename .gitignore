@@ -1,0 +1,37 @@
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Backend
+backend/target/
+backend/*.log
+backend/logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+
+# Runtime
+.runtime/
+*.pid
+*.log
+
+# Kubernetes runtime secrets
+k8s/*secret*.yaml
+k8s/generated/

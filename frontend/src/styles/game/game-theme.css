@@ -1,0 +1,83 @@
+:root {
+  --game-board-deep: #062f6d;
+  --game-board-mid: #0b4f9f;
+  --game-board-light: #176ec5;
+  --game-board-border: rgb(114 188 255 / 36%);
+  --game-board-glow: rgb(60 156 255 / 28%);
+  --game-panel: rgb(4 35 82 / 76%);
+  --game-panel-strong: rgb(3 25 61 / 92%);
+  --game-text: #f5f9ff;
+  --game-text-muted: #b9cce6;
+  --game-accent: #ff9a39;
+  --game-success: #65e6ac;
+  --game-danger: #ff91a0;
+  --game-focus: #ffe98d;
+  --game-player-ring: #8cc9ff;
+  --game-player-turn-ring: #f7d75d;
+  --game-player-turn-glow: rgb(247 215 93 / 52%);
+  --game-rack-wood-light: #d9a064;
+  --game-rack-wood-mid: #a8642d;
+  --game-rack-wood-dark: #633517;
+  --game-rack-edge: #f0c185;
+  --game-tile-bg: #fffdf1;
+  --game-tile-edge: #ddd6c5;
+  --game-tile-shadow: rgb(0 13 35 / 38%);
+  --game-tile-red: #c9192c;
+  --game-tile-blue: #185fd0;
+  --game-tile-yellow: #e7771d;
+  --game-tile-black: #172131;
+  --game-tile-joker: #d3264b;
+  --game-control-bg: linear-gradient(180deg, rgb(27 91 163 / 94%), rgb(5 44 99 / 96%));
+  --game-control-disabled: rgb(31 62 99 / 74%);
+  --game-control-radius: 25px;
+  --game-tile-radius: 8px;
+  --game-tile-width: 82px;
+  --game-tile-height: 96px;
+  --game-gap-xs: 6px;
+  --game-gap-sm: 10px;
+  --game-gap-md: 16px;
+  --game-gap-lg: 24px;
+}
+.game-exit-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(5 12 18 / 72%);
+}
+
+.game-exit-modal__panel {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 16px;
+  color: #f6f8fa;
+  background: #17212b;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 45%);
+}
+
+.game-exit-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.game-exit-modal__actions button {
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.game-exit-modal__confirm {
+  color: #fff;
+  background: #c83f49;
+}
+
+.game-exit-modal__actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}

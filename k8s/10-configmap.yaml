@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: realtime-tile-game-config
+  namespace: realtime-tile-game
+  labels:
+    app.kubernetes.io/name: realtime-tile-game
+    app.kubernetes.io/part-of: realtime-tile-game
+    app.kubernetes.io/component: platform
+    app.kubernetes.io/managed-by: kubectl
+data:
+  MYSQL_DATABASE: realtime_tile_game
+  MYSQL_USER: rtg_user
+  DB_URL: jdbc:mysql://mysql:3306/realtime_tile_game?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+  DB_USERNAME: rtg_user
+  DB_POOL_MAX_SIZE: "10"
+  DB_POOL_MIN_IDLE: "2"
+  SERVER_PORT: "8080"
+  CORS_ALLOWED_ORIGINS: http://localhost:30517,http://127.0.0.1:30517
+  JWT_ISSUER: realtime-tile-game
+  JWT_AUDIENCE: realtime-tile-game-web
+  JWT_ACCESS_TOKEN_TTL_SECONDS: "1800"
+  AUTH_REFRESH_TOKEN_TTL_SECONDS: "2592000"
+  AUTH_REFRESH_COOKIE_SECURE: "false"
+  AUTH_REFRESH_COOKIE_NAME: rtg_refresh
+  TZ: Asia/Seoul

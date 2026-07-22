@@ -1,0 +1,98 @@
+:root {
+  --motion-rack-sort-duration: 220ms;
+  --motion-rack-drag-duration: 150ms;
+  --motion-rack-drop-duration: 130ms;
+  --motion-rack-return-duration: 170ms;
+  --motion-tile-draw-duration: 340ms;
+  --motion-tile-settle-duration: 160ms;
+  --motion-rack-easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-draw-easing: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rack-tile-move {
+  transition: transform var(--motion-rack-sort-duration) var(--motion-rack-easing);
+  will-change: transform;
+}
+
+.tile-rack--dragging .rack-tile-move {
+  transition-duration: var(--motion-rack-drag-duration);
+}
+
+.rack-tile-enter-active,
+.rack-tile-leave-active {
+  transition:
+    transform var(--motion-rack-drag-duration) var(--motion-rack-easing),
+    opacity var(--motion-rack-drag-duration) ease;
+}
+
+.rack-tile-enter-from,
+.rack-tile-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 16px, 0) scale(0.96);
+}
+
+.rack-drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.rack-drag-overlay--settling {
+  transition: transform var(--motion-rack-drop-duration) var(--motion-rack-easing);
+}
+
+.rack-drag-overlay--returning {
+  transition-duration: var(--motion-rack-return-duration);
+}
+
+.rack-drag-ghost {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 100%;
+}
+
+.game-tile--entering {
+  z-index: 8;
+  animation:
+    game-tile-draw-in var(--motion-tile-draw-duration) var(--motion-draw-easing) both,
+    game-tile-settle var(--motion-tile-settle-duration) var(--motion-rack-easing) var(--motion-tile-draw-duration) both;
+}
+
+@keyframes game-tile-draw-in {
+  0% {
+    opacity: 0.32;
+    transform: translate3d(24vw, -8vh, 0) rotate(5deg) scale(0.76);
+  }
+  72% {
+    opacity: 1;
+    transform: translate3d(-3px, -8px, 0) rotate(-1deg) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0) scale(1);
+  }
+}
+
+@keyframes game-tile-settle {
+  50% { filter: brightness(1.2) drop-shadow(0 0 10px rgb(255 230 140 / 80%)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-rack-sort-duration: 1ms;
+    --motion-rack-drag-duration: 1ms;
+    --motion-rack-drop-duration: 1ms;
+    --motion-rack-return-duration: 1ms;
+    --motion-tile-draw-duration: 1ms;
+    --motion-tile-settle-duration: 1ms;
+  }
+
+  .game-tile--entering {
+    animation: none;
+    outline: 3px solid var(--game-focus);
+  }
+}

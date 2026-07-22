@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROPERTIES_FILE="$BASE_DIR/.mvn/wrapper/maven-wrapper.properties"
+DISTRIBUTION_URL=$(sed -n 's/^distributionUrl=//p' "$PROPERTIES_FILE")
+EXPECTED_SHA512=$(sed -n 's/^distributionSha512Sum=//p' "$PROPERTIES_FILE")
+MAVEN_VERSION=$(printf '%s' "$DISTRIBUTION_URL" | sed -n 's#.*apache-maven/\([^/]*\)/.*#\1#p')
+MAVEN_HOME="${MAVEN_USER_HOME:-$HOME/.m2}/wrapper/dists/apache-maven-$MAVEN_VERSION"
+MAVEN_BIN="$MAVEN_HOME/bin/mvn"
+
+if [ ! -x "$MAVEN_BIN" ]; then
+  TMP_DIR=$(mktemp -d)
+  trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+  ARCHIVE="$TMP_DIR/apache-maven.zip"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DISTRIBUTION_URL" -o "$ARCHIVE"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$DISTRIBUTION_URL" -O "$ARCHIVE"
+  else
+    echo "curl 또는 wget이 필요합니다." >&2
+    exit 1
+  fi
+
+  if command -v sha512sum >/dev/null 2>&1; then
+    ACTUAL_SHA512=$(sha512sum "$ARCHIVE" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA512=$(shasum -a 512 "$ARCHIVE" | awk '{print $1}')
+  else
+    echo "Maven 배포본 검증을 위해 sha512sum 또는 shasum이 필요합니다." >&2
+    exit 1
+  fi
+
+  if [ "$ACTUAL_SHA512" != "$EXPECTED_SHA512" ]; then
+    echo "Maven 배포본 SHA-512 검증에 실패했습니다." >&2
+    exit 1
+  fi
+
+  mkdir -p "$MAVEN_HOME"
+  unzip -q "$ARCHIVE" -d "$TMP_DIR/extracted"
+  cp -R "$TMP_DIR/extracted/apache-maven-$MAVEN_VERSION/." "$MAVEN_HOME/"
+fi
+
+exec "$MAVEN_BIN" "$@"
