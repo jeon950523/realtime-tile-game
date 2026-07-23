@@ -8,6 +8,7 @@ import DraftMeld from '@/components/game/DraftMeld.vue'
 import TileRack from '@/components/game/TileRack.vue'
 import WorkingTableBoard from '@/components/game/WorkingTableBoard.vue'
 import { useWorkingTable } from '@/composables/game/useWorkingTable'
+import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
 import { validateDraftMeld, validateTurnDraft } from '@/domain/game/turnDraftValidation'
 import {
   GAME_ACCEPTED_STATE_GRACE_MS,
@@ -15,8 +16,8 @@ import {
   resetGameStoreClientForTests,
   useGameStore,
 } from '@/stores/game'
-import type { GamePrivateState, GameRackTile, GameTableMeld, GameTableTile } from '@/types/game'
-import type { WorkingMeld } from '@/types/turnDraft'
+import type { CommitTilePlacementCommand, GamePrivateState, GameRackTile, GameTableMeld, GameTableTile } from '@/types/game'
+import type { WorkingTilePlacement } from '@/types/turnDraft'
 
 const realtime = vi.hoisted(() => ({
   options: null as Record<string, (...args: any[]) => any> | null,
@@ -39,6 +40,33 @@ vi.mock('@/realtime/authenticatedStompClient', () => ({
     isGameCommandReady = vi.fn(() => true)
   },
 }))
+
+
+interface CandidateSpec {
+  clientMeldId: string
+  sourceMeldId: string | null
+  tileIds: readonly string[]
+  gridRow?: number
+  gridColumn?: number
+}
+
+function candidateSpecsToPlacements(
+  specs: readonly CandidateSpec[],
+  rack: readonly GameRackTile[],
+): WorkingTilePlacement[] {
+  const rackIds = new Set(rack.map((tile) => tile.tileId))
+  return specs.flatMap((spec) => spec.tileIds.map((tileId, offset) => {
+    const fromRack = rackIds.has(tileId)
+    return {
+      tileId,
+      gridRow: spec.gridRow ?? 0,
+      gridColumn: (spec.gridColumn ?? 0) + offset,
+      source: fromRack ? 'CURRENT_PLAYER_RACK' as const : 'COMMITTED_TABLE' as const,
+      sourceMeldId: fromRack ? null : spec.sourceMeldId,
+      originalPositionOrder: fromRack ? null : offset,
+    }
+  }))
+}
 
 function numberTile(color: GameRackTile['color'], number: number, copy = 'A', order = number): GameRackTile {
   return {
@@ -90,11 +118,16 @@ function readyStore() {
   return store
 }
 
-function candidate() {
-  return [{
-    clientMeldId: existingMeldId,
-    tileIds: [...privateState().publicState.tableMelds[0]!.tiles.map((tile) => tile.tileId), rack12.tileId],
-  }]
+function candidate(): CommitTilePlacementCommand[] {
+  const committed = privateState().publicState.tableMelds[0]!
+  return [
+    ...committed.tiles.map((tile) => ({
+      tileId: tile.tileId,
+      gridRow: committed.gridRow,
+      gridColumn: committed.gridColumn + tile.positionOrder,
+    })),
+    { tileId: rack12.tileId, gridRow: committed.gridRow, gridColumn: committed.gridColumn + committed.tiles.length },
+  ]
 }
 
 function committedState(): GamePrivateState {
@@ -340,10 +373,12 @@ function workingFixture() {
 }
 
 describe('Phase 7 third review button-free Working Table UX', () => {
-  function board(melds: WorkingMeld[], rack: GameRackTile[], baseline: GameTableMeld[]) {
+  function board(specs: CandidateSpec[], rack: GameRackTile[], baseline: GameTableMeld[]) {
+    const placements = candidateSpecsToPlacements(specs, rack)
+    const candidates = deriveTableCandidates(placements)
     return mount(WorkingTableBoard, { props: {
-      melds, rack, baselineMelds: baseline,
-      validation: validateTurnDraft(melds, rack, true, baseline),
+      placements, rack, baselineMelds: baseline,
+      validation: validateTurnDraft(candidates, rack, true, baseline, placements),
       initialMeldCompleted: true, isMeldEditable: () => true,
     } })
   }
@@ -409,9 +444,9 @@ describe('Phase 7 third review button-free Working Table UX', () => {
 
   it('FE-P7-UI-008 compacts an empty source meld after its last tile moves', () => {
     const { scope, working } = workingFixture()
-    const source = working.workingTable.value!.melds[1]!
+    const source = working.candidates.value[1]!
     expect(working.moveTile(source.tileIds[0]!, existingMeldId)).toBe(true)
-    expect(working.workingTable.value!.melds.some((meld) => meld.clientMeldId === source.clientMeldId)).toBe(false)
+    expect(working.candidates.value.some((meld) => meld.clientMeldId === source.clientMeldId)).toBe(false)
     scope.stop()
   })
 

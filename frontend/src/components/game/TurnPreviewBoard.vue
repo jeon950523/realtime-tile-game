@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 import GameTile from '@/components/game/GameTile.vue'
 import { TABLE_GRID_COLUMNS, TABLE_GRID_ROWS, TABLE_GRID_VISIBLE_ROWS } from '@/domain/game/tableGrid'
-import { flowCommittedTableMelds, flowWorkingPlacements, tableContentRows } from '@/domain/game/tableFlow'
+import { tableContentRows } from '@/domain/game/tableFlow'
 import { publicPreviewTileFromId } from '@/domain/game/turnPreview'
 import type { GameTableMeld, TurnPreviewSnapshot } from '@/types/game'
 import type { WorkingTilePlacement } from '@/types/turnDraft'
@@ -14,27 +14,31 @@ const props = defineProps<{
   turnPlayerNickname: string
 }>()
 
-const committedFlow = computed(() => flowCommittedTableMelds(props.committedMelds))
+const committedMelds = computed(() => [...props.committedMelds]
+  .sort((left, right) => left.positionOrder - right.positionOrder
+    || left.meldId.localeCompare(right.meldId)))
 const committedTileIds = computed(() => new Set(
-  committedFlow.value.flatMap((meld) => meld.tiles.map((tile) => tile.tileId)),
+  committedMelds.value.flatMap((meld) => meld.tiles.map((tile) => tile.tileId)),
 ))
 const committedCoordinates = computed(() => new Map(
-  committedFlow.value.flatMap((meld) => meld.tiles.map((tile) => [
+  committedMelds.value.flatMap((meld) => meld.tiles.map((tile) => [
     tile.tileId,
     `${meld.gridRow}:${meld.gridColumn + tile.positionOrder}`,
   ] as const)),
 ))
-const flowedPreviewPlacements = computed(() => flowWorkingPlacements(
-  props.preview.tilePlacements.map((placement) => ({
+const previewPlacements = computed<WorkingTilePlacement[]>(() => props.preview.tilePlacements
+  .map((placement): WorkingTilePlacement => ({
     ...placement,
     source: committedTileIds.value.has(placement.tileId)
       ? 'COMMITTED_TABLE'
       : 'CURRENT_PLAYER_RACK',
     sourceMeldId: null,
     originalPositionOrder: null,
-  } satisfies WorkingTilePlacement)),
-))
-const contentRows = computed(() => tableContentRows(flowedPreviewPlacements.value))
+  }))
+  .sort((left, right) => left.gridRow - right.gridRow
+    || left.gridColumn - right.gridColumn
+    || left.tileId.localeCompare(right.tileId)))
+const contentRows = computed(() => tableContentRows(previewPlacements.value))
 function tileStyle(placement: { gridRow: number; gridColumn: number }): Record<string, string> {
   return {
     '--table-grid-column': String(placement.gridColumn),
@@ -66,7 +70,7 @@ function placementChanged(placement: { tileId: string; gridRow: number; gridColu
         :style="{ '--table-content-rows': String(contentRows) }"
       >
         <div
-          v-for="(placement, index) in flowedPreviewPlacements"
+          v-for="(placement, index) in previewPlacements"
           :key="placement.tileId"
           class="turn-preview-table-tile"
           :class="{

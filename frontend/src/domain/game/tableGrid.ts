@@ -11,20 +11,12 @@ export const TABLE_GRID_COMPACT_CELL_WIDTH_PX = 52
 export const TABLE_GRID_COMPACT_ROW_HEIGHT_PX = 60
 export const TABLE_TILE_COMPACT_WIDTH_PX = 48
 export const TABLE_TILE_COMPACT_HEIGHT_PX = 59
-export const TABLE_GRID_COMPACT_BREAKPOINT_PX = 1280
 export const TABLE_GRID_CANVAS_WIDTH_PX = TABLE_GRID_COLUMNS * TABLE_GRID_CELL_WIDTH_PX
 export const TABLE_GRID_CANVAS_HEIGHT_PX = TABLE_GRID_ROWS * TABLE_GRID_ROW_HEIGHT_PX
 export const TABLE_GRID_VIEWPORT_HEIGHT_PX = TABLE_GRID_VISIBLE_ROWS * TABLE_GRID_ROW_HEIGHT_PX
 export const TABLE_GRID_COMPACT_CANVAS_WIDTH_PX = TABLE_GRID_COLUMNS * TABLE_GRID_COMPACT_CELL_WIDTH_PX
 export const TABLE_GRID_COMPACT_CANVAS_HEIGHT_PX = TABLE_GRID_ROWS * TABLE_GRID_COMPACT_ROW_HEIGHT_PX
-export const TABLE_GRID_COMPACT_VIEWPORT_HEIGHT_PX = TABLE_GRID_VISIBLE_ROWS * TABLE_GRID_COMPACT_ROW_HEIGHT_PX
 
-export interface TableGridMeldPlacement {
-  clientMeldId: string
-  tileIds: readonly string[]
-  gridRow: number
-  gridColumn: number
-}
 
 export interface TableGridCoordinate {
   gridRow: number
@@ -120,18 +112,6 @@ export function isTableTilePlacementLayoutValid(
     && placements.every((placement) => isTableGridCellInBounds(placement.gridRow, placement.gridColumn))
 }
 
-export function firstAvailableTableTileCoordinate(
-  placements: readonly TableGridTilePlacement[],
-  movingTileIds: readonly string[],
-): TableGridCoordinate | null {
-  for (let gridRow = 0; gridRow < TABLE_GRID_ROWS; gridRow++) {
-    for (let gridColumn = 0; gridColumn + movingTileIds.length <= TABLE_GRID_COLUMNS; gridColumn++) {
-      if (canPlaceTableTiles(placements, movingTileIds, gridRow, gridColumn)) return { gridRow, gridColumn }
-    }
-  }
-  return null
-}
-
 export function isTableGridCoordinateInBounds(
   tileCount: number,
   gridRow: number,
@@ -146,49 +126,3 @@ export function isTableGridCoordinateInBounds(
     && gridColumn + tileCount <= TABLE_GRID_COLUMNS
 }
 
-export function canPlaceTableMeld(
-  melds: readonly TableGridMeldPlacement[],
-  meldId: string,
-  tileCount: number,
-  gridRow: number,
-  gridColumn: number,
-): boolean {
-  if (!isTableGridCoordinateInBounds(tileCount, gridRow, gridColumn)) return false
-  const occupied = new Set<string>()
-  melds.filter((meld) => meld.clientMeldId !== meldId).forEach((meld) => {
-    for (let offset = 0; offset < meld.tileIds.length; offset++) {
-      occupied.add(`${meld.gridRow}:${meld.gridColumn + offset}`)
-    }
-  })
-  for (let offset = 0; offset < tileCount; offset++) {
-    if (occupied.has(`${gridRow}:${gridColumn + offset}`)) return false
-  }
-  return true
-}
-
-export function isTableGridLayoutValid(melds: readonly TableGridMeldPlacement[]): boolean {
-  const tileIds = melds.flatMap((meld) => [...meld.tileIds])
-  return new Set(tileIds).size === tileIds.length
-    && melds.every((meld) => canPlaceTableMeld(
-      melds,
-      meld.clientMeldId,
-      meld.tileIds.length,
-      meld.gridRow,
-      meld.gridColumn,
-    ))
-}
-
-export function firstAvailableTableGridCoordinate(
-  melds: readonly TableGridMeldPlacement[],
-  meldId: string,
-  tileCount: number,
-): TableGridCoordinate | null {
-  for (let gridRow = 0; gridRow < TABLE_GRID_ROWS; gridRow++) {
-    for (let gridColumn = 0; gridColumn + tileCount <= TABLE_GRID_COLUMNS; gridColumn++) {
-      if (canPlaceTableMeld(melds, meldId, tileCount, gridRow, gridColumn)) {
-        return { gridRow, gridColumn }
-      }
-    }
-  }
-  return null
-}

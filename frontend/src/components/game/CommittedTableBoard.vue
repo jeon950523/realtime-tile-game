@@ -3,13 +3,15 @@ import { computed } from 'vue'
 
 import GameTile from '@/components/game/GameTile.vue'
 import { TABLE_GRID_COLUMNS, TABLE_GRID_ROWS, TABLE_GRID_VISIBLE_ROWS } from '@/domain/game/tableGrid'
-import { flowCommittedTableMelds, tableContentRows } from '@/domain/game/tableFlow'
+import { tableContentRows } from '@/domain/game/tableFlow'
 import type { GameTableMeld, GameTableTile } from '@/types/game'
 
 const props = defineProps<{ melds: readonly GameTableMeld[] }>()
 
-const flowedMelds = computed(() => flowCommittedTableMelds(props.melds))
-const placements = computed(() => flowedMelds.value.flatMap((meld) => [...meld.tiles]
+const displayMelds = computed(() => [...props.melds]
+  .sort((left, right) => left.positionOrder - right.positionOrder
+    || left.meldId.localeCompare(right.meldId)))
+const placements = computed(() => displayMelds.value.flatMap((meld) => [...meld.tiles]
   .sort((left, right) => left.positionOrder - right.positionOrder)
   .map((tile) => ({
     meldId: meld.meldId,
@@ -34,7 +36,7 @@ function tileStyle(placement: { gridRow: number; gridColumn: number }): Record<s
   >
     <header class="committed-table-grid__status">
       <strong>확정된 Table</strong>
-      <span>{{ flowedMelds.length }}개 조합</span>
+      <span>{{ displayMelds.length }}개 조합</span>
     </header>
     <div
       class="committed-table-grid__viewport table-scroll-viewport"

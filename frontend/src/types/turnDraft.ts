@@ -51,27 +51,11 @@ export interface WorkingTableOperation {
 export interface WorkingTableState {
   baseline: WorkingTableBaseline
   placements: WorkingTilePlacement[]
-  /** Derived compatibility view. Never mutated or persisted as editing state. */
-  readonly melds: DerivedTableCandidate[]
   history: WorkingTableOperation[]
   pendingCommitActionId: string | null
 }
 
-/** Legacy structural view retained only at rule/component test boundaries. */
-export interface WorkingMeld {
-  clientCandidateId?: string
-  clientMeldId: string
-  sourceMeldId?: string | null
-  tileIds: string[]
-  placements?: WorkingTilePlacement[]
-  gridRow?: number
-  gridColumn?: number
-}
-export type ReadonlyWorkingMeld = ReadonlyDerivedTableCandidate
-export type DraftMeld = WorkingMeld
 export type ReadonlyDraftMeld = ReadonlyDerivedTableCandidate
-export type TurnDraft = WorkingTableState
-
 export type DraftMeldKind = 'RUN' | 'GROUP' | 'INVALID'
 
 export interface DraftMeldValidation {

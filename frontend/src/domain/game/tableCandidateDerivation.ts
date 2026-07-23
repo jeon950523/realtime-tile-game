@@ -6,7 +6,7 @@ function candidateId(row: number, startColumn: number, tileIds: readonly string[
 
 function preservedSourceMeldId(
   candidatePlacements: readonly WorkingTilePlacement[],
-  allPlacements: readonly WorkingTilePlacement[],
+  sourceTileIds: ReadonlyMap<string, ReadonlySet<string>>,
 ): string | null {
   const sourceMeldIds = new Set(candidatePlacements
     .map((placement) => placement.sourceMeldId)
@@ -14,9 +14,9 @@ function preservedSourceMeldId(
   if (sourceMeldIds.size !== 1) return null
   const sourceMeldId = [...sourceMeldIds][0]!
   const candidateIds = new Set(candidatePlacements.map((placement) => placement.tileId))
-  return allPlacements
-    .filter((placement) => placement.sourceMeldId === sourceMeldId)
-    .every((placement) => candidateIds.has(placement.tileId))
+  const originalIds = sourceTileIds.get(sourceMeldId)
+  return originalIds
+    && [...originalIds].every((tileId) => candidateIds.has(tileId))
     ? sourceMeldId
     : null
 }
@@ -28,6 +28,13 @@ export function deriveTableCandidates(
     left.gridRow - right.gridRow
       || left.gridColumn - right.gridColumn
       || left.tileId.localeCompare(right.tileId))
+  const sourceTileIds = new Map<string, Set<string>>()
+  ordered.forEach((placement) => {
+    if (!placement.sourceMeldId) return
+    const ids = sourceTileIds.get(placement.sourceMeldId) ?? new Set<string>()
+    ids.add(placement.tileId)
+    sourceTileIds.set(placement.sourceMeldId, ids)
+  })
   const candidates: DerivedTableCandidate[] = []
   let block: WorkingTilePlacement[] = []
 
@@ -37,10 +44,11 @@ export function deriveTableCandidates(
     const gridRow = snapshot[0]!.gridRow
     const gridColumn = snapshot[0]!.gridColumn
     const tileIds = snapshot.map((placement) => placement.tileId)
-    const sourceMeldId = preservedSourceMeldId(snapshot, ordered)
+    const sourceMeldId = preservedSourceMeldId(snapshot, sourceTileIds)
+    const id = sourceMeldId ?? candidateId(gridRow, gridColumn, tileIds)
     candidates.push({
-      clientCandidateId: sourceMeldId ?? candidateId(gridRow, gridColumn, tileIds),
-      clientMeldId: sourceMeldId ?? candidateId(gridRow, gridColumn, tileIds),
+      clientCandidateId: id,
+      clientMeldId: id,
       sourceMeldId,
       tileIds,
       placements: snapshot,

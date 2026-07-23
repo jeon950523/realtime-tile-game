@@ -42,35 +42,35 @@ describe('Phase 7 TurnDraft domain', () => {
 
   it('DRAFT-001 group drop creates one new meld', () => {
     expect(draft.addAsNewMeld(order.slice(0, 3), order)).toBe(true)
-    expect(draft.draft.value?.melds).toHaveLength(1)
-    expect(draft.draft.value?.melds[0]?.tileIds).toEqual(order.slice(0, 3))
+    expect(draft.candidates.value).toHaveLength(1)
+    expect(draft.candidates.value[0]?.tileIds).toEqual(order.slice(0, 3))
   })
 
   it('DRAFT-002 single drop creates an invalid one-tile meld', () => {
     draft.addAsNewMeld([order[0]!], order)
-    expect(draft.validation.value.melds[draft.draft.value!.melds[0]!.clientMeldId]?.valid).toBe(false)
+    expect(draft.validation.value.melds[draft.candidates.value[0]!.clientMeldId]?.valid).toBe(false)
   })
 
   it('DRAFT-003 adds a rack tile to an existing meld', () => {
     draft.addAsNewMeld(order.slice(0, 2), order)
-    const id = draft.draft.value!.melds[0]!.clientMeldId
+    const id = draft.candidates.value[0]!.clientMeldId
     draft.addToMeld(id, [order[2]!], order)
-    expect(draft.draft.value!.melds[0]!.tileIds).toEqual(order.slice(0, 3))
+    expect(draft.candidates.value[0]!.tileIds).toEqual(order.slice(0, 3))
   })
 
   it('DRAFT-004 changes tile order inside a draft meld', () => {
     draft.addAsNewMeld(order.slice(0, 3), order)
-    const id = draft.draft.value!.melds[0]!.clientMeldId
+    const id = draft.candidates.value[0]!.clientMeldId
     draft.reorderTile(id, 2, 0)
-    expect(draft.draft.value!.melds[0]!.tileIds[0]).toBe(order[2])
+    expect(draft.candidates.value[0]!.tileIds[0]).toBe(order[2])
   })
 
   it('DRAFT-005 moves a tile between draft melds', () => {
     draft.addAsNewMeld(order.slice(0, 3), order)
     draft.addAsNewMeld(order.slice(3, 6), order)
-    const [left, right] = draft.draft.value!.melds
+    const [left, right] = draft.candidates.value
     draft.moveTile(left!.tileIds[0]!, right!.clientMeldId)
-    expect(draft.draft.value!.melds[1]!.tileIds).toContain(order[0])
+    expect(draft.candidates.value[1]!.tileIds).toContain(order[0])
   })
 
   it('DRAFT-006 returns a draft tile to the visible rack', () => {
@@ -83,19 +83,19 @@ describe('Phase 7 TurnDraft domain', () => {
     draft.addAsNewMeld(order.slice(0, 3), order)
     draft.returnTile(order[0]!)
     expect(draft.undo()).toBe(true)
-    expect(draft.draft.value!.melds[0]!.tileIds).toEqual(order.slice(0, 3))
+    expect(draft.candidates.value[0]!.tileIds).toEqual(order.slice(0, 3))
   })
 
   it('DRAFT-008 full cancel returns the exact source display order', () => {
     draft.addAsNewMeld(order.slice(0, 3), [...order].reverse())
     expect(draft.cancel()).toEqual([...order].reverse())
-    expect(draft.draft.value?.melds).toEqual([])
+    expect(draft.candidates.value).toEqual([])
   })
 
   it('DRAFT-009 preserves the authoritative rack partition', () => {
     draft.addAsNewMeld(order.slice(0, 3), order)
     expect(draft.partitionPreserved.value).toBe(true)
-    expect(hasDraftPartitionInvariant(order, order.slice(3), draft.draft.value!.melds)).toBe(true)
+    expect(hasDraftPartitionInvariant(order, order.slice(3), draft.candidates.value)).toBe(true)
   })
 
   it('DRAFT-010 rejects duplicate tiles across melds', () => {
@@ -106,7 +106,7 @@ describe('Phase 7 TurnDraft domain', () => {
   it('DRAFT-011 removes an empty meld automatically', () => {
     draft.addAsNewMeld([order[0]!], order)
     draft.returnTile(order[0]!)
-    expect(draft.draft.value?.melds).toEqual([])
+    expect(draft.candidates.value).toEqual([])
   })
 
   it('VALIDATION-001 recognizes an ordered RUN and score', () => {
@@ -143,9 +143,28 @@ describe('Phase 7 TurnDraft domain', () => {
     expect(result.canCommit).toBe(true)
   })
 
+  it('VALIDATION-007 requires authoritative Tile Placement coordinates to lock an existing table before first registration', () => {
+    const baselineTiles = [tile('BLACK', 1, 'B'), tile('BLACK', 2, 'B'), tile('BLACK', 3, 'B')]
+    const baseline: GameTableMeld[] = [{
+      meldId: 'baseline', meldType: 'RUN', score: 6, positionOrder: 0,
+      gridRow: 4, gridColumn: 6,
+      tiles: baselineTiles.map((item, positionOrder) => ({ ...item, positionOrder })),
+    }]
+    const candidates = [
+      { clientMeldId: 'baseline', sourceMeldId: 'baseline', tileIds: baselineTiles.map((item) => item.tileId) },
+      { clientMeldId: 'new', sourceMeldId: null, tileIds: order.slice(0, 3) },
+    ]
+
+    const result = validateTurnDraft(candidates, rack, false, baseline, [])
+
+    expect(result.baselinePreserved).toBe(true)
+    expect(result.canCommit).toBe(false)
+    expect(result.reason).toBe('첫 등록 전에는 기존 Table을 변경할 수 없습니다.')
+  })
+
   it('does not clear a pending draft on an early public event, then resolves on private sync', async () => {
     draft.addAsNewMeld(order.slice(0, 3), order)
-    const meld = draft.draft.value!.melds[0]!
+    const meld = draft.candidates.value[0]!
     draft.markCommitPending('action')
     table.value = [{ meldId: meld.clientMeldId, meldType: 'RUN', score: 24, positionOrder: 0, gridRow: 0, gridColumn: 0, tiles: [] }]
     version.value = 1

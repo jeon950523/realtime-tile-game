@@ -39,13 +39,15 @@ function placement(item: GameRackTile, gridRow: number, gridColumn: number): Wor
   }
 }
 
+const red6 = tile(6)
 const red7 = tile(7)
 const red8 = tile(8)
 const red9 = tile(9)
+const red10 = tile(10)
 
 function workingFixture() {
   const scope = effectScope()
-  const rack = ref<GameRackTile[]>([red7, red8, red9])
+  const rack = ref<GameRackTile[]>([red6, red7, red8, red9, red10])
   const working = scope.run(() => useWorkingTable({
     authoritativeRack: rack,
     authoritativeVersion: ref(7),
@@ -89,10 +91,57 @@ describe('Phase 7 direct placement Candidate merge fix', () => {
         [red8.tileId, 0, 1],
         [red9.tileId, 0, 2],
       ])
-    expect(working.workingTable.value?.melds).toHaveLength(1)
-    expect(working.workingTable.value?.melds[0]?.tileIds)
+    expect(working.candidates.value).toHaveLength(1)
+    expect(working.candidates.value[0]?.tileIds)
       .toEqual([red7.tileId, red8.tileId, red9.tileId])
     expect(working.validation.value).toMatchObject({ invalidCount: 0, validCount: 1 })
+
+    scope.stop()
+  })
+
+
+  it('prepends 6 to an existing 789 Candidate without moving the original tiles', () => {
+    const { scope, rack, working } = workingFixture()
+    const displayOrder = rack.value.map((item) => item.tileId)
+
+    expect(working.addAsNewMeld([red7.tileId], displayOrder, 2, 5)).toBe(true)
+    expect(working.addAsNewMeld([red8.tileId], displayOrder, 2, 6)).toBe(true)
+    expect(working.addAsNewMeld([red9.tileId], displayOrder, 2, 7)).toBe(true)
+    expect(working.addAsNewMeld([red6.tileId], displayOrder, 2, 4)).toBe(true)
+
+    expect(working.placements.value.map((item) => [item.tileId, item.gridRow, item.gridColumn]))
+      .toEqual([
+        [red6.tileId, 2, 4],
+        [red7.tileId, 2, 5],
+        [red8.tileId, 2, 6],
+        [red9.tileId, 2, 7],
+      ])
+    expect(working.candidates.value).toHaveLength(1)
+    expect(working.candidates.value[0]?.tileIds)
+      .toEqual([red6.tileId, red7.tileId, red8.tileId, red9.tileId])
+
+    scope.stop()
+  })
+
+  it('appends 10 to an existing 789 Candidate without moving the original tiles', () => {
+    const { scope, rack, working } = workingFixture()
+    const displayOrder = rack.value.map((item) => item.tileId)
+
+    expect(working.addAsNewMeld([red7.tileId], displayOrder, 3, 5)).toBe(true)
+    expect(working.addAsNewMeld([red8.tileId], displayOrder, 3, 6)).toBe(true)
+    expect(working.addAsNewMeld([red9.tileId], displayOrder, 3, 7)).toBe(true)
+    expect(working.addAsNewMeld([red10.tileId], displayOrder, 3, 8)).toBe(true)
+
+    expect(working.placements.value.map((item) => [item.tileId, item.gridRow, item.gridColumn]))
+      .toEqual([
+        [red7.tileId, 3, 5],
+        [red8.tileId, 3, 6],
+        [red9.tileId, 3, 7],
+        [red10.tileId, 3, 8],
+      ])
+    expect(working.candidates.value).toHaveLength(1)
+    expect(working.candidates.value[0]?.tileIds)
+      .toEqual([red7.tileId, red8.tileId, red9.tileId, red10.tileId])
 
     scope.stop()
   })

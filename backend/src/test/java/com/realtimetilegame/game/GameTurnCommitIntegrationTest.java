@@ -549,6 +549,65 @@ class GameTurnCommitIntegrationTest {
     }
 
     @Test
+    void beP7InitialOrder001_newInitialMeldsCanBePlacedAboveExistingTableMeld() {
+        StartedGame fixture = startedGame("initial-order-above");
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long requesterId = game.currentTurnUser().id();
+        String baselineId = UUID.randomUUID().toString();
+        configureCandidateState(fixture.gameId(), requesterId, false,
+            List.of(baseline(baselineId, "RUN", 6, List.of("BLACK-01-A", "BLACK-02-A", "BLACK-03-A"))),
+            EXACT_THIRTY);
+        jdbcTemplate.update(
+            "UPDATE game_melds SET grid_row = 6, grid_column = 8 WHERE game_id = ? AND meld_id = ?",
+            fixture.gameId(), baselineId
+        );
+
+        commitService.commit(fixture.gameId(), requesterId, commandWithLayout(game.version(), List.of(
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3), 1, 1),
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6), 2, 1),
+            new CommitTableMeldCommand(baselineId, List.of("BLACK-01-A", "BLACK-02-A", "BLACK-03-A"), 6, 8)
+        )));
+
+        GamePlayer requester = playerRepository.findByGameIdAndUserId(fixture.gameId(), requesterId).orElseThrow();
+        assertThat(requester.initialMeldCompleted()).isTrue();
+        assertThat(queryService.privateState(fixture.gameId(), requesterId).publicState().tableMelds())
+            .hasSize(3)
+            .filteredOn(meld -> meld.meldId().equals(baselineId))
+            .singleElement()
+            .satisfies(meld -> {
+                assertThat(meld.gridRow()).isEqualTo(6);
+                assertThat(meld.gridColumn()).isEqualTo(8);
+                assertThat(meld.tiles()).extracting(tile -> tile.tileId())
+                    .containsExactly("BLACK-01-A", "BLACK-02-A", "BLACK-03-A");
+            });
+    }
+
+    @Test
+    void beP7InitialOrder002_initialMeldCannotMoveExistingTableMeld() {
+        StartedGame fixture = startedGame("initial-lock-position");
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long requesterId = game.currentTurnUser().id();
+        String baselineId = UUID.randomUUID().toString();
+        configureCandidateState(fixture.gameId(), requesterId, false,
+            List.of(baseline(baselineId, "RUN", 6, List.of("BLACK-01-A", "BLACK-02-A", "BLACK-03-A"))),
+            EXACT_THIRTY);
+
+        assertBusinessCode(() -> commitService.commit(fixture.gameId(), requesterId,
+            commandWithLayout(game.version(), List.of(
+                new CommitTableMeldCommand(baselineId, List.of("BLACK-01-A", "BLACK-02-A", "BLACK-03-A"), 4, 4),
+                new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3), 5, 1),
+                new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6), 6, 1)
+            ))), ErrorCode.INVALID_TABLE_LAYOUT);
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT grid_row FROM game_melds WHERE game_id = ? AND meld_id = ?",
+            Integer.class, fixture.gameId(), baselineId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT grid_column FROM game_melds WHERE game_id = ? AND meld_id = ?",
+            Integer.class, fixture.gameId(), baselineId)).isZero();
+    }
+
+    @Test
     void beP7C001_jokerMeldCanMoveAndExtendWithoutChangingItsRole() {
         StartedGame fixture = startedGame("joker-move");
         Game game = gameRepository.findById(fixture.gameId()).orElseThrow();

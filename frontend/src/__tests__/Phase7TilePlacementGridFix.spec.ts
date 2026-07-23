@@ -230,9 +230,9 @@ describe('Phase 7 tile placement automatic Candidate grid fix', () => {
     scope.stop()
   })
 
-  it('FE-P7-FIX-011 Committed Meld → Full Flow Tile Placement 좌표 변환', () => {
+  it('FE-P7-FIX-011 Committed Meld → 서버 확정 Tile Placement 좌표 보존', () => {
     expect(committedMeldsToPlacements([tableMeld()]).map((item) => [item.gridRow, item.gridColumn]))
-      .toEqual([[0, 0], [0, 1], [0, 2]])
+      .toEqual([[2, 4], [2, 5], [2, 6]])
   })
 
   it('FE-P7-FIX-012 Cancel → Committed Placement 복구', () => {

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { getApiErrorMessage } from '@/api/apiError'
 import * as gameApi from '@/api/gameApi'
+import { isTableTilePlacementLayoutValid } from '@/domain/game/tableGrid'
 import { AuthenticatedStompClient } from '@/realtime/authenticatedStompClient'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -98,30 +99,6 @@ function candidateMatchesTable(
   })
 }
 
-interface LegacyCommitMeldInput {
-  clientMeldId?: string
-  tileIds: readonly string[]
-  gridRow?: number
-  gridColumn?: number
-}
-
-type CommitPlacementInput = CommitTilePlacementCommand | LegacyCommitMeldInput
-
-function normalizeCommitPlacements(inputs: readonly CommitPlacementInput[]): CommitTilePlacementCommand[] {
-  if (inputs.every((input): input is CommitTilePlacementCommand => 'tileId' in input)) {
-    return inputs.map((placement) => ({ ...placement }))
-  }
-  return inputs.flatMap((input, meldIndex) => {
-    if ('tileId' in input) return [{ ...input }]
-    const gridRow = input.gridRow ?? 0
-    const gridColumn = input.gridColumn ?? (meldIndex * 13)
-    return input.tileIds.map((tileId, tileIndex) => ({
-      tileId,
-      gridRow,
-      gridColumn: gridColumn + tileIndex,
-    }))
-  })
-}
 
 function createActionId(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -521,12 +498,13 @@ export const useGameStore = defineStore('game', {
       }
     },
 
-    commitTurn(placements: readonly CommitPlacementInput[]): string | null {
+    commitTurn(placements: readonly CommitTilePlacementCommand[]): string | null {
       const state = this.privateState
-      if (!state || this.commandInProgress || !this.gameCommandReady || placements.length === 0) return null
+      if (!state || this.commandInProgress || !this.gameCommandReady || placements.length === 0
+        || !isTableTilePlacementLayoutValid(placements)) return null
       const actionId = createActionId()
       const baseVersion = state.publicState.gameVersion
-      const tilePlacements = normalizeCommitPlacements(placements)
+      const tilePlacements = placements.map((placement) => ({ ...placement }))
       this.startPendingCommand(actionId, baseVersion, 'COMMIT', tilePlacements)
       this.lastCommandReply = null
       this.lastCommandError = null

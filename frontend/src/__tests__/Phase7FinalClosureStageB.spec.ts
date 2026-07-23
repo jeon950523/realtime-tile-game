@@ -59,7 +59,7 @@ describe('Phase 7 final closure Stage B grid working table', () => {
   it('FE-P7B-001 moves a whole meld to a free logical coordinate', () => {
     const { scope, working } = fixture()
     expect(working.moveMeld(firstId, 3, 6)).toBe(true)
-    expect(working.workingTable.value?.melds.find((meld) => meld.tileIds.includes('RED-01-A')))
+    expect(working.candidates.value.find((meld) => meld.tileIds.includes('RED-01-A')))
       .toMatchObject({ gridRow: 3, gridColumn: 6 })
     scope.stop()
   })
@@ -67,7 +67,7 @@ describe('Phase 7 final closure Stage B grid working table', () => {
   it('FE-P7B-002 allows an individual rack tile as an INVALID draft meld', () => {
     const { scope, rack, working } = fixture()
     expect(working.addAsNewMeld([rack.value[0]!.tileId], rack.value.map((tile) => tile.tileId), 2, 4)).toBe(true)
-    const added = working.workingTable.value!.melds.at(-1)!
+    const added = working.candidates.value.at(-1)!
     expect(added).toMatchObject({ tileIds: [rack.value[0]!.tileId], gridRow: 2, gridColumn: 4 })
     expect(working.validation.value.melds[added.clientMeldId]?.kind).toBe('INVALID')
     scope.stop()
@@ -76,7 +76,7 @@ describe('Phase 7 final closure Stage B grid working table', () => {
   it('FE-P7B-003 allows a two-tile incomplete draft meld', () => {
     const { scope, rack, working } = fixture()
     expect(working.addAsNewMeld(rack.value.slice(0, 2).map((tile) => tile.tileId), rack.value.map((tile) => tile.tileId), 2, 7)).toBe(true)
-    const added = working.workingTable.value!.melds.at(-1)!
+    const added = working.candidates.value.at(-1)!
     expect(added.tileIds).toHaveLength(2)
     expect(working.validation.value.melds[added.clientMeldId]?.valid).toBe(false)
     scope.stop()
@@ -86,7 +86,9 @@ describe('Phase 7 final closure Stage B grid working table', () => {
     const { scope, working } = fixture()
     expect(working.moveMeld(secondId, 3, 10)).toBe(true)
     expect(working.moveMeld(secondId, 0, 2)).toBe(true)
-    expect(working.workingTable.value?.melds[1]).toMatchObject({ gridRow: 0, gridColumn: 4 })
+    // This is an interactive collision fallback, not a baseline restore.
+    // The occupied 0:2 request is nudged to the nearest gutter-safe start at column 4.
+    expect(working.candidates.value[1]).toMatchObject({ gridRow: 0, gridColumn: 4 })
     scope.stop()
   })
 
@@ -95,16 +97,16 @@ describe('Phase 7 final closure Stage B grid working table', () => {
     expect(working.moveMeld(firstId, TABLE_GRID_ROWS, 0)).toBe(false)
     expect(working.moveMeld(firstId, 0, TABLE_GRID_COLUMNS)).toBe(false)
     expect(working.moveMeld(firstId, 0, TABLE_GRID_COLUMNS - 2)).toBe(true)
-    expect(working.workingTable.value?.melds.find((meld) => meld.tileIds.includes('RED-01-A')))
+    expect(working.candidates.value.find((meld) => meld.tileIds.includes('RED-01-A')))
       .toMatchObject({ gridRow: 1, gridColumn: 0 })
     scope.stop()
   })
 
   it('FE-P7B-006 separates one table tile into its own positioned draft meld', () => {
     const { scope, working } = fixture()
-    const tileId = working.workingTable.value!.melds[0]!.tileIds[2]!
+    const tileId = working.candidates.value[0]!.tileIds[2]!
     expect(working.moveAsNewMeld(tileId, 2, 5)).toBe(true)
-    expect(working.workingTable.value!.melds).toContainEqual(expect.objectContaining({
+    expect(working.candidates.value).toContainEqual(expect.objectContaining({
       tileIds: [tileId], gridRow: 2, gridColumn: 5,
     }))
     scope.stop()
@@ -113,11 +115,11 @@ describe('Phase 7 final closure Stage B grid working table', () => {
   it('FE-P7B-007 merges two melds while retaining the target coordinate', () => {
     const { scope, working } = fixture()
     expect(working.mergeMelds(secondId, firstId)).toBe(true)
-    expect(working.workingTable.value!.melds).toHaveLength(1)
-    expect(working.workingTable.value!.melds[0]).toMatchObject({
+    expect(working.candidates.value).toHaveLength(1)
+    expect(working.candidates.value[0]).toMatchObject({
       gridRow: 0, gridColumn: 0,
     })
-    expect(working.workingTable.value!.melds[0]!.tileIds).toHaveLength(6)
+    expect(working.candidates.value[0]!.tileIds).toHaveLength(6)
     scope.stop()
   })
 
@@ -125,7 +127,7 @@ describe('Phase 7 final closure Stage B grid working table', () => {
     const { scope, working } = fixture()
     working.moveMeld(firstId, 4, 8)
     expect(working.undo()).toBe(true)
-    expect(working.workingTable.value?.melds[0]).toMatchObject({ gridRow: 0, gridColumn: 0 })
+    expect(working.candidates.value[0]).toMatchObject({ gridRow: 0, gridColumn: 0 })
     scope.stop()
   })
 
@@ -133,18 +135,19 @@ describe('Phase 7 final closure Stage B grid working table', () => {
     const { scope, working } = fixture()
     working.moveMeld(secondId, 5, 9)
     working.cancel()
-    expect(working.workingTable.value?.melds[1]).toMatchObject({ gridRow: 0, gridColumn: 4 })
+    // Cancel restores the server-authoritative baseline coordinate, not an auto-flow coordinate.
+    expect(working.candidates.value[1]).toMatchObject({ gridRow: 0, gridColumn: 13 })
     scope.stop()
   })
 
   it('shows no persistent grid cells and renders a weak preview only during drag', async () => {
     const { scope, rack, table, working } = fixture()
-    const melds = working.workingTable.value!.melds
+    const placements = working.placements.value
     const wrapper = mount(WorkingTableBoard, { props: {
-      melds,
+      placements,
       rack: rack.value,
       baselineMelds: table.value,
-      validation: validateTurnDraft(melds, rack.value, true, table.value),
+      validation: validateTurnDraft(working.candidates.value, rack.value, true, table.value, placements),
       initialMeldCompleted: true,
       isMeldEditable: () => true,
     } })
@@ -175,12 +178,12 @@ describe('Phase 7 final closure Stage B grid working table', () => {
 
   it('FE-P7B-010 shows and immediately clears Rack-to-Table drop guidance', async () => {
     const { scope, rack, table, working } = fixture()
-    const melds = working.workingTable.value!.melds
+    const placements = working.placements.value
     const wrapper = mount(WorkingTableBoard, { props: {
-      melds,
+      placements,
       rack: rack.value,
       baselineMelds: table.value,
-      validation: validateTurnDraft(melds, rack.value, true, table.value),
+      validation: validateTurnDraft(working.candidates.value, rack.value, true, table.value, placements),
       initialMeldCompleted: true,
       isMeldEditable: () => true,
       rackDropPreview: {

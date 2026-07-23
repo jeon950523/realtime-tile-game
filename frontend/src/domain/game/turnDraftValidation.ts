@@ -92,20 +92,6 @@ function initialBaselineIsLocked(
   }))
 }
 
-function legacyInitialBaselineIsLocked(
-  melds: readonly ReadonlyDraftMeld[],
-  baselineMelds: readonly GameTableMeld[],
-): boolean {
-  if (melds.length < baselineMelds.length) return false
-  return baselineMelds.every((baseline, index) => {
-    const candidate = melds[index]
-    return candidate?.clientMeldId === baseline.meldId
-      && candidate.sourceMeldId === baseline.meldId
-      && candidate.tileIds.length === baseline.tiles.length
-      && candidate.tileIds.every((tileId, tileIndex) => tileId === baseline.tiles[tileIndex]?.tileId)
-  })
-}
-
 export function validateTurnDraft(
   melds: readonly ReadonlyDraftMeld[],
   rack: readonly GameRackTile[],
@@ -135,9 +121,9 @@ export function validateTurnDraft(
       .reduce((meldSum, tileId) => meldSum + (validation.resolvedTileScores[tileId] ?? 0), 0)
   }, 0)
   const baselinePreserved = baselineIsPreserved(melds, baselineMelds)
-  const baselineLocked = initialMeldCompleted || (placements.length > 0
-    ? initialBaselineIsLocked(placements, baselineMelds)
-    : legacyInitialBaselineIsLocked(melds, baselineMelds))
+  const baselineLocked = initialMeldCompleted
+    || baselineMelds.length === 0
+    || initialBaselineIsLocked(placements, baselineMelds)
   const thresholdMet = initialMeldCompleted || totalScore >= 30
   let reason: string | null = null
   if (melds.length === 0) reason = 'Working Table에 Meld가 없습니다.'

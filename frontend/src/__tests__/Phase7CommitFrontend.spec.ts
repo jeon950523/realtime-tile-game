@@ -8,7 +8,7 @@ import CommittedTableBoard from '@/components/game/CommittedTableBoard.vue'
 import TurnActionControl from '@/components/game/TurnActionControl.vue'
 import { useTurnDraft } from '@/composables/game/useTurnDraft'
 import { resetGameStoreClientForTests, useGameStore } from '@/stores/game'
-import type { GamePrivateState, GameRackTile, GameTableMeld } from '@/types/game'
+import type { CommitTilePlacementCommand, GamePrivateState, GameRackTile, GameTableMeld } from '@/types/game'
 
 const realtime = vi.hoisted(() => ({
   publishCommit: vi.fn(), publishDraw: vi.fn(), publishPass: vi.fn(), isGameCommandReady: vi.fn(() => true),
@@ -28,6 +28,19 @@ vi.mock('@/realtime/authenticatedStompClient', () => ({
 const rack: GameRackTile[] = [7, 8, 9].map((number, index) => ({
   tileId: `RED-${String(number).padStart(2, '0')}-A`, tileType: 'NUMBER', color: 'RED', number, joker: false, positionOrder: index,
 }))
+
+
+function commitPlacements(
+  tileIds: readonly string[] = rack.map((tile) => tile.tileId),
+  gridRow = 0,
+  gridColumn = 0,
+): CommitTilePlacementCommand[] {
+  return tileIds.map((tileId, offset) => ({
+    tileId,
+    gridRow,
+    gridColumn: gridColumn + offset,
+  }))
+}
 
 function state(version = 0): GamePrivateState {
   return {
@@ -77,7 +90,7 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-002 publishes only action/version and tile placements', () => {
     const store = storeWithState()
-    const actionId = store.commitTurn([{ clientMeldId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tileIds: rack.map((tile) => tile.tileId) }])
+    const actionId = store.commitTurn(commitPlacements())
     expect(actionId).toBeTruthy()
     const command = realtime.publishCommit.mock.calls[0]![1]
     expect(Object.keys(command).sort()).toEqual(['actionId', 'gameVersion', 'tilePlacements'])
@@ -88,15 +101,15 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-003 blocks duplicate commit clicks while one command is pending', () => {
     const store = storeWithState()
-    const melds = [{ clientMeldId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tileIds: rack.map((tile) => tile.tileId) }]
-    expect(store.commitTurn(melds)).toBeTruthy()
-    expect(store.commitTurn(melds)).toBeNull()
+    const placements = commitPlacements()
+    expect(store.commitTurn(placements)).toBeTruthy()
+    expect(store.commitTurn(placements)).toBeNull()
     expect(realtime.publishCommit).toHaveBeenCalledTimes(1)
   })
 
   it('COMMIT-FE-004 keeps pending state when accepted reply arrives before private state', () => {
     const store = storeWithState()
-    const actionId = store.commitTurn([{ clientMeldId: 'a', tileIds: rack.map((tile) => tile.tileId) }])!
+    const actionId = store.commitTurn(commitPlacements())!
     store.applyGameCommandReply({ eventType: 'GAME_COMMAND_ACCEPTED', actionId, accepted: true, duplicate: false,
       code: null, message: 'ok', gameId: 33, actionType: 'COMMIT', gameVersion: 1 })
     expect(store.commandInProgress).toBe(true)
@@ -104,7 +117,7 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-005 accepts private state before a late reply without applying twice', () => {
     const store = storeWithState()
-    const actionId = store.commitTurn([{ clientMeldId: 'a', tileIds: rack.map((tile) => tile.tileId) }])!
+    const actionId = store.commitTurn(commitPlacements())!
     const committed = state(1)
     committed.myRack = []
     store.applyPrivateStateEvent({ eventType: 'GAME_STATE_UPDATED', occurredAt: '', payload: committed })
@@ -116,7 +129,7 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-006 validation rejection clears pending without reloading authority', () => {
     const store = storeWithState()
-    const actionId = store.commitTurn([{ clientMeldId: 'a', tileIds: rack.map((tile) => tile.tileId) }])!
+    const actionId = store.commitTurn(commitPlacements())!
     store.applyGameCommandReply({ eventType: 'GAME_COMMAND_REJECTED', actionId, accepted: false, duplicate: false,
       code: 'INVALID_MELD', message: 'invalid', gameId: 33, actionType: 'COMMIT', gameVersion: 0 })
     expect(store.commandInProgress).toBe(false)
@@ -127,7 +140,7 @@ describe('Phase 7 commit frontend synchronization', () => {
   it('COMMIT-FE-007 stale rejection discards pending command and reloads latest state', async () => {
     const store = storeWithState()
     vi.mocked(gameApi.getGameState).mockResolvedValue(state(1))
-    const actionId = store.commitTurn([{ clientMeldId: 'a', tileIds: rack.map((tile) => tile.tileId) }])!
+    const actionId = store.commitTurn(commitPlacements())!
     store.applyGameCommandReply({ eventType: 'GAME_COMMAND_REJECTED', actionId, accepted: false, duplicate: false,
       code: 'STALE_GAME_VERSION', message: 'stale', gameId: 33, actionType: 'COMMIT', gameVersion: 0 })
     await nextTick()
@@ -142,7 +155,7 @@ describe('Phase 7 commit frontend synchronization', () => {
     const table = ref<GameTableMeld[]>([])
     const draft = scope.run(() => useTurnDraft({ authoritativeRack, authoritativeVersion: version, authoritativeSyncRevision: syncRevision, tableMelds: table, initialMeldCompleted: ref(false) }))!
     draft.addAsNewMeld(rack.map((tile) => tile.tileId), rack.map((tile) => tile.tileId))
-    const meldId = draft.draft.value!.melds[0]!.clientMeldId
+    const meldId = draft.candidates.value[0]!.clientMeldId
     draft.markCommitPending('action')
     authoritativeRack.value = []
     table.value = [{ meldId, meldType: 'RUN', score: 24, positionOrder: 0, gridRow: 0, gridColumn: 0,
@@ -176,9 +189,9 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-011 sends the entire candidate table including retained existing melds', () => {
     const store = storeWithState()
-    const candidate = [
-      { clientMeldId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tileIds: ['TABLE-01', 'TABLE-02', 'RED-07-A'] },
-      { clientMeldId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', tileIds: ['RED-08-A', 'RED-09-A'] },
+    const candidate: CommitTilePlacementCommand[] = [
+      ...commitPlacements(['TABLE-01', 'TABLE-02', 'RED-07-A'], 0, 0),
+      ...commitPlacements(['RED-08-A', 'RED-09-A'], 0, 13),
     ]
     store.commitTurn(candidate)
     expect(realtime.publishCommit.mock.calls[0]![1].tilePlacements).toEqual([
@@ -192,7 +205,7 @@ describe('Phase 7 commit frontend synchronization', () => {
 
   it('COMMIT-FE-012 never sends client validation, score, type, or creator authority', () => {
     const store = storeWithState()
-    store.commitTurn([{ clientMeldId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tileIds: rack.map((tile) => tile.tileId) }])
+    store.commitTurn(commitPlacements())
     const serialized = JSON.stringify(realtime.publishCommit.mock.calls[0]![1])
     expect(serialized).not.toMatch(/score|meldType|valid|createdBy/)
   })
@@ -200,7 +213,7 @@ describe('Phase 7 commit frontend synchronization', () => {
   it('COMMIT-FE-013 does not grant meld identity authority to the client command', () => {
     const store = storeWithState()
     const existingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-    store.commitTurn([{ clientMeldId: existingId, tileIds: rack.map((tile) => tile.tileId) }])
+    store.commitTurn(commitPlacements())
     expect(JSON.stringify(realtime.publishCommit.mock.calls[0]![1])).not.toContain(existingId)
   })
 
@@ -211,14 +224,14 @@ describe('Phase 7 commit frontend synchronization', () => {
       tableMelds: ref<GameTableMeld[]>([]), initialMeldCompleted: ref(false),
     }))!
     draft.addAsNewMeld(rack.map((tile) => tile.tileId), rack.map((tile) => tile.tileId))
-    expect(draft.draft.value!.melds[0]!.clientMeldId).toBe('candidate:0:0:RED-07-A|RED-08-A|RED-09-A')
-    expect(draft.draft.value!.melds[0]!.sourceMeldId).toBeNull()
+    expect(draft.candidates.value[0]!.clientMeldId).toBe('candidate:0:0:RED-07-A|RED-08-A|RED-09-A')
+    expect(draft.candidates.value[0]!.sourceMeldId).toBeNull()
     scope.stop()
   })
 
   it('COMMIT-FE-015 treats private snapshot then late accepted reply as one authoritative commit', () => {
     const store = storeWithState()
-    const actionId = store.commitTurn([{ clientMeldId: 'a', tileIds: rack.map((tile) => tile.tileId) }])!
+    const actionId = store.commitTurn(commitPlacements())!
     const committed = state(1)
     committed.myRack = []
     store.applyPrivateStateEvent({ eventType: 'GAME_STATE_UPDATED', occurredAt: '', payload: committed })
@@ -227,4 +240,24 @@ describe('Phase 7 commit frontend synchronization', () => {
     expect(store.privateState?.publicState.gameVersion).toBe(1)
     expect(store.commandInProgress).toBe(false)
   })
+  it('COMMIT-FE-016 rejects duplicate tiles, overlapping cells, and out-of-range placements at the Store boundary', () => {
+    const store = storeWithState()
+    const duplicateTile = [
+      { tileId: 'RED-07-A', gridRow: 0, gridColumn: 0 },
+      { tileId: 'RED-07-A', gridRow: 0, gridColumn: 1 },
+    ]
+    const overlappingCells = [
+      { tileId: 'RED-07-A', gridRow: 0, gridColumn: 0 },
+      { tileId: 'RED-08-A', gridRow: 0, gridColumn: 0 },
+    ]
+    const outOfRange = [
+      { tileId: 'RED-07-A', gridRow: 18, gridColumn: 0 },
+    ]
+
+    expect(store.commitTurn(duplicateTile)).toBeNull()
+    expect(store.commitTurn(overlappingCells)).toBeNull()
+    expect(store.commitTurn(outOfRange)).toBeNull()
+    expect(realtime.publishCommit).not.toHaveBeenCalled()
+  })
+
 })

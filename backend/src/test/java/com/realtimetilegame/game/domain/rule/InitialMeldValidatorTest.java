@@ -127,7 +127,55 @@ class InitialMeldValidatorTest {
     }
 
     @Test
-    void init011SpeedPolicySkipsInitialMeldRequirement() {
+    void init011AcceptsNewMeldsBeforeExistingMeldsInCandidateOrder() {
+        MeldState existing = meld("EXISTING", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 3));
+        MeldState run = meld("RUN", id(TileColor.RED, 7), id(TileColor.RED, 8), id(TileColor.RED, 9));
+        MeldState group = meld("GROUP", id(TileColor.BLUE, 2), id(TileColor.YELLOW, 2), id(TileColor.BLACK, 2, "B"));
+        List<TileId> contributed = concat(run.tileIds(), group.tileIds());
+
+        InitialMeldResult result = success(
+            table(existing), table(run, group, existing), rack(contributed), RackState.empty(), false, false
+        );
+
+        assertThat(result.totalScore()).isEqualTo(30);
+        assertThat(result.completed()).isTrue();
+    }
+
+    @Test
+    void init012AcceptsNewMeldBetweenExistingMeldsInCandidateOrder() {
+        MeldState firstExisting = meld("FIRST", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 3));
+        MeldState secondExisting = meld("SECOND", id(TileColor.BLUE, 5), id(TileColor.BLUE, 6), id(TileColor.BLUE, 7));
+        MeldState run = meld("RUN", id(TileColor.RED, 7), id(TileColor.RED, 8), id(TileColor.RED, 9));
+        MeldState group = meld("GROUP", id(TileColor.BLUE, 2), id(TileColor.YELLOW, 2), id(TileColor.BLACK, 2, "B"));
+        List<TileId> contributed = concat(run.tileIds(), group.tileIds());
+
+        InitialMeldResult result = success(
+            table(firstExisting, secondExisting),
+            table(firstExisting, run, group, secondExisting),
+            rack(contributed), RackState.empty(), false, false
+        );
+
+        assertThat(result.totalScore()).isEqualTo(30);
+        assertThat(result.completed()).isTrue();
+    }
+
+    @Test
+    void init013RejectsChangedExistingMeldEvenWhenCandidateOrderChanges() {
+        MeldState existing = meld("EXISTING", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 3));
+        MeldState changed = meld("EXISTING", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 4));
+        MeldState run = meld("RUN", id(TileColor.RED, 7), id(TileColor.RED, 8), id(TileColor.RED, 9));
+        MeldState group = meld("GROUP", id(TileColor.BLUE, 2), id(TileColor.YELLOW, 2), id(TileColor.BLACK, 2, "B"));
+        List<TileId> contributed = concat(run.tileIds(), group.tileIds());
+
+        ValidationResult<InitialMeldResult> result = validate(
+            table(existing), table(run, group, changed), rack(contributed), RackState.empty(), false, false
+        );
+
+        assertFailure(result, RuleErrorCode.TABLE_MANIPULATION_NOT_ALLOWED_ON_INITIAL_MELD);
+    }
+
+    @Test
+    void init014SpeedPolicySkipsInitialMeldRequirement() {
         ValidationResult<InitialMeldResult> result = validate(
             TableState.empty(), TableState.empty(), RackState.empty(), RackState.empty(), false, true
         );

@@ -92,7 +92,18 @@ public final class InitialMeldValidator {
     private static boolean existingTableIsUnchanged(InitialMeldContext context) {
         List<MeldState> baseline = context.turnStartTable().melds();
         List<MeldState> candidate = context.candidateTable().melds();
-        return candidate.size() >= baseline.size()
-            && candidate.subList(0, baseline.size()).equals(baseline);
+        if (candidate.size() < baseline.size()) {
+            return false;
+        }
+
+        Map<MeldId, MeldState> candidateById = new LinkedHashMap<>();
+        for (MeldState candidateMeld : candidate) {
+            if (candidateById.putIfAbsent(candidateMeld.meldId(), candidateMeld) != null) {
+                return false;
+            }
+        }
+        return baseline.stream().allMatch(existing ->
+            existing.equals(candidateById.get(existing.meldId()))
+        );
     }
 }

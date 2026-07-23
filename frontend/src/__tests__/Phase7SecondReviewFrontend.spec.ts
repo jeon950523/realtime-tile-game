@@ -7,10 +7,38 @@ import TileRack from '@/components/game/TileRack.vue'
 import WorkingTableBoard from '@/components/game/WorkingTableBoard.vue'
 import { useWorkingTable } from '@/composables/game/useWorkingTable'
 import { computeAdaptiveRackLayout } from '@/domain/game/rackLayout'
+import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
 import { validateTurnDraft } from '@/domain/game/turnDraftValidation'
 import motionCss from '@/styles/game/game-motion.css?raw'
 import type { GameRackTile, GameTableMeld } from '@/types/game'
-import type { WorkingMeld } from '@/types/turnDraft'
+import type { WorkingTilePlacement } from '@/types/turnDraft'
+
+
+interface CandidateSpec {
+  clientMeldId: string
+  sourceMeldId: string | null
+  tileIds: readonly string[]
+  gridRow?: number
+  gridColumn?: number
+}
+
+function candidateSpecsToPlacements(
+  specs: readonly CandidateSpec[],
+  rack: readonly GameRackTile[],
+): WorkingTilePlacement[] {
+  const rackIds = new Set(rack.map((tile) => tile.tileId))
+  return specs.flatMap((spec) => spec.tileIds.map((tileId, offset) => {
+    const fromRack = rackIds.has(tileId)
+    return {
+      tileId,
+      gridRow: spec.gridRow ?? 0,
+      gridColumn: (spec.gridColumn ?? 0) + offset,
+      source: fromRack ? 'CURRENT_PLAYER_RACK' as const : 'COMMITTED_TABLE' as const,
+      sourceMeldId: fromRack ? null : spec.sourceMeldId,
+      originalPositionOrder: fromRack ? null : offset,
+    }
+  }))
+}
 
 function tile(color: GameRackTile['color'], number: number, copy = 'A', positionOrder = number): GameRackTile {
   return {
@@ -119,10 +147,12 @@ describe('Phase 7 second review current-turn UX', () => {
 })
 
 describe('Phase 7 second review status bar', () => {
-  function statusWrapper(melds: WorkingMeld[], rack: GameRackTile[], baseline: GameTableMeld[], completed: boolean) {
-    const validation = validateTurnDraft(melds, rack, completed, baseline)
+  function statusWrapper(specs: CandidateSpec[], rack: GameRackTile[], baseline: GameTableMeld[], completed: boolean) {
+    const placements = candidateSpecsToPlacements(specs, rack)
+    const candidates = deriveTableCandidates(placements)
+    const validation = validateTurnDraft(candidates, rack, completed, baseline, placements)
     return mount(WorkingTableBoard, { props: {
-      melds, rack, baselineMelds: baseline, validation, initialMeldCompleted: completed,
+      placements, rack, baselineMelds: baseline, validation, initialMeldCompleted: completed,
       isMeldEditable: () => true,
     } })
   }
@@ -136,11 +166,12 @@ describe('Phase 7 second review status bar', () => {
 
   it('STATUS-002 keeps the exact-thirty score in validation without duplicating it in the table', () => {
     const rack = [tile('RED', 7), tile('RED', 8), tile('RED', 9), tile('BLUE', 1), tile('BLUE', 2), tile('BLUE', 3)]
-    const melds: WorkingMeld[] = [
+    const melds: CandidateSpec[] = [
       { clientMeldId: 'a', sourceMeldId: null, tileIds: rack.slice(0, 3).map((item) => item.tileId), gridRow: 0, gridColumn: 0 },
       { clientMeldId: 'b', sourceMeldId: null, tileIds: rack.slice(3).map((item) => item.tileId), gridRow: 0, gridColumn: 13 },
     ]
-    const validation = validateTurnDraft(melds, rack, false, [])
+    const placements = candidateSpecsToPlacements(melds, rack)
+    const validation = validateTurnDraft(deriveTableCandidates(placements), rack, false, [], placements)
     expect(validation.submissionScore).toBe(30)
     expect(statusWrapper(melds, rack, [], false).text()).not.toContain('30점')
   })
@@ -155,7 +186,8 @@ describe('Phase 7 second review status bar', () => {
     const rack = [tile('RED', 4)]
     const baseline = [tableMeld(firstId, 'RED', [1, 2, 3])]
     const melds = [{ clientMeldId: firstId, sourceMeldId: firstId, tileIds: [...baseline[0]!.tiles.map((item) => item.tileId), rack[0]!.tileId], gridRow: 0, gridColumn: 0 }]
-    const validation = validateTurnDraft(melds, rack, true, baseline)
+    const placements = candidateSpecsToPlacements(melds, rack)
+    const validation = validateTurnDraft(deriveTableCandidates(placements), rack, true, baseline, placements)
     expect(validation.submissionScore).toBe(4)
     expect(statusWrapper(melds, rack, baseline, true).text()).not.toContain('이번 제출 4점')
   })
@@ -170,45 +202,45 @@ describe('Phase 7 second review status bar', () => {
 describe('Phase 7 second review unified working table operations', () => {
   it('WORK-001 clones the committed table into an immutable baseline and editable working copy', () => {
     const { working, table } = fixture()
-    expect(working.workingTable.value?.melds.map((meld) => meld.clientMeldId)).toEqual([firstId, secondId])
+    expect(working.candidates.value.map((meld) => meld.clientMeldId)).toEqual([firstId, secondId])
     expect(working.workingTable.value?.baseline.committedMelds).not.toBe(table.value)
   })
 
   it('WORK-002 adds a rack tile directly to an existing meld after initial completion', () => {
     const { working, rack } = fixture()
     expect(working.addToMeld(firstId, [rack.value[0]!.tileId], rack.value.map((item) => item.tileId))).toBe(true)
-    expect(working.workingTable.value?.melds[0]!.tileIds).toContain('RED-04-A')
+    expect(working.candidates.value[0]!.tileIds).toContain('RED-04-A')
   })
 
   it('WORK-003 reorders tiles inside an existing meld', () => {
     const { working } = fixture()
     expect(working.reorderTile(firstId, 0, 2)).toBe(true)
-    expect(working.workingTable.value?.melds[0]!.tileIds[2]).toBe('RED-01-A')
+    expect(working.candidates.value[0]!.tileIds[2]).toBe('RED-01-A')
   })
 
   it('WORK-004 moves a baseline table tile to another meld without losing it', () => {
     const { working } = fixture()
     expect(working.moveTile('RED-03-A', secondId)).toBe(true)
-    expect(working.workingTable.value?.melds[1]!.tileIds).toContain('RED-03-A')
+    expect(working.candidates.value[1]!.tileIds).toContain('RED-03-A')
   })
 
   it('WORK-005 splits one existing meld into two working melds', () => {
     const { working } = fixture()
     expect(working.splitMeld(firstId, 1)).toBe(true)
-    expect(working.workingTable.value?.melds).toHaveLength(3)
+    expect(working.candidates.value).toHaveLength(3)
   })
 
   it('WORK-006 merges two melds into one candidate meld', () => {
     const { working } = fixture()
     expect(working.mergeMelds(firstId, secondId)).toBe(true)
-    expect(working.workingTable.value?.melds).toHaveLength(1)
-    expect(working.workingTable.value?.melds[0]!.tileIds).toHaveLength(6)
+    expect(working.candidates.value).toHaveLength(1)
+    expect(working.candidates.value[0]!.tileIds).toHaveLength(6)
   })
 
   it('WORK-007 removes an empty source meld after a merge', () => {
     const { working } = fixture()
     working.mergeMelds(firstId, secondId)
-    expect(working.workingTable.value?.melds.some((meld) => meld.clientMeldId === firstId)).toBe(false)
+    expect(working.candidates.value.some((meld) => meld.clientMeldId === firstId)).toBe(false)
   })
 
   it('WORK-008 permits an invalid intermediate table locally', () => {
@@ -225,8 +257,13 @@ describe('Phase 7 second review unified working table operations', () => {
 
   it('WORK-010 re-enables a valid candidate after undo repairs the invalid operation', () => {
     const { working, rack } = fixture()
-    working.addToMeld(firstId, [rack.value[0]!.tileId], rack.value.map((item) => item.tileId))
-    working.splitMeld(firstId, 1)
+    expect(working.addToMeld(
+      firstId,
+      [rack.value[0]!.tileId],
+      rack.value.map((item) => item.tileId),
+    )).toBe(true)
+    expect(working.candidates.value[0]!.clientMeldId).toBe(firstId)
+    expect(working.splitMeld(firstId, 1)).toBe(true)
     expect(working.undo()).toBe(true)
     expect(working.validation.value.invalidCount).toBe(0)
     expect(working.validation.value.canCommit).toBe(true)
@@ -246,7 +283,7 @@ describe('Phase 7 second review unified working table operations', () => {
   it('WORK-013 preserves every baseline table tile exactly once through recomposition', () => {
     const { working } = fixture()
     working.moveTile('RED-03-A', secondId)
-    const ids = working.workingTable.value!.melds.flatMap((meld) => meld.tileIds)
+    const ids = working.candidates.value.flatMap((meld) => meld.tileIds)
     expect(ids.filter((id) => id === 'RED-03-A')).toHaveLength(1)
     expect(working.validation.value.baselinePreserved).toBe(true)
   })
@@ -270,7 +307,7 @@ describe('Phase 7 second review working table recovery', () => {
     const { working } = fixture()
     working.moveTile('RED-03-A', secondId)
     working.undo()
-    expect(working.workingTable.value?.melds[0]!.tileIds).toContain('RED-03-A')
+    expect(working.candidates.value[0]!.tileIds).toContain('RED-03-A')
   })
 
   it('RECOVER-003 cancel restores the entire baseline table and source rack order', () => {
@@ -317,8 +354,8 @@ describe('Phase 7 second review working table recovery', () => {
 
   it('RECOVER-008 leaves state unchanged after an invalid drop target', () => {
     const { working } = fixture()
-    const before = JSON.parse(JSON.stringify(working.workingTable.value?.melds))
+    const before = JSON.parse(JSON.stringify(working.candidates.value))
     expect(working.moveTile('NOT-A-TILE', firstId)).toBe(false)
-    expect(working.workingTable.value?.melds).toEqual(before)
+    expect(working.candidates.value).toEqual(before)
   })
 })

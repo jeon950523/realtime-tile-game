@@ -3,7 +3,6 @@ import { computed, readonly, ref, watch, type Ref } from 'vue'
 import { isTableTilePlacementLayoutValid } from '@/domain/game/tableGrid'
 import {
   firstAvailableTableCoordinateWithGutter,
-  flowCommittedTableMelds,
   resolveInteractiveTableCoordinate,
   resolveNearestTableCoordinate,
 } from '@/domain/game/tableFlow'
@@ -33,6 +32,11 @@ interface UseWorkingTableOptions {
 
 function cloneTableMelds(melds: readonly GameTableMeld[]): GameTableMeld[] {
   return melds.map((meld) => ({ ...meld, tiles: meld.tiles.map((tile) => ({ ...tile })) }))
+}
+
+function orderedCommittedMelds(melds: readonly GameTableMeld[]): GameTableMeld[] {
+  return [...melds].sort((left, right) => left.positionOrder - right.positionOrder
+    || left.meldId.localeCompare(right.meldId))
 }
 
 function clonePlacements(placements: readonly WorkingTilePlacement[]): WorkingTilePlacement[] {
@@ -79,7 +83,7 @@ function sameGridPlacements(left: readonly WorkingTilePlacement[], right: readon
 }
 
 export function committedMeldsToPlacements(melds: readonly GameTableMeld[]): WorkingTilePlacement[] {
-  return flowCommittedTableMelds(melds).flatMap((meld) => [...meld.tiles]
+  return orderedCommittedMelds(melds).flatMap((meld) => [...meld.tiles]
     .sort((left, right) => left.positionOrder - right.positionOrder)
     .map((tile) => ({
       tileId: tile.tileId,
@@ -103,7 +107,9 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
   const workingTable = ref<WorkingTableState | null>(null)
   const lastResolution = ref<'NONE' | 'COMMITTED' | 'STALE' | 'CANCELLED'>('NONE')
   const ownTurn = computed(() => options.isMyTurn?.value ?? true)
-  const authoritativeFingerprint = computed(() => committedMeldsFingerprint(flowCommittedTableMelds(options.tableMelds.value)))
+  const authoritativeFingerprint = computed(() => committedMeldsFingerprint(
+    orderedCommittedMelds(options.tableMelds.value),
+  ))
   const candidates = computed(() => deriveTableCandidates(workingTable.value?.placements ?? []))
   const rackTileIdSet = computed(() => new Set(options.authoritativeRack.value.map((tile) => tile.tileId)))
   const draftTileIds = computed(() => workingTable.value?.placements
@@ -136,7 +142,7 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
   })
 
   function createWorkingTable(sourceDisplayOrderIds?: readonly string[]): WorkingTableState {
-    const committedMelds = cloneTableMelds(flowCommittedTableMelds(options.tableMelds.value))
+    const committedMelds = cloneTableMelds(orderedCommittedMelds(options.tableMelds.value))
     const baselinePlacements = committedMeldsToPlacements(committedMelds)
     const baseline: WorkingTableBaseline = {
       gameId: options.gameId?.value ?? null,
@@ -151,7 +157,6 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
     return {
       baseline,
       placements: baselinePlacements,
-      get melds() { return deriveTableCandidates(this.placements) },
       history: [],
       pendingCommitActionId: null,
     }
@@ -190,8 +195,9 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
       ...current.baseline.placements.map((placement) => placement.tileId),
     ])
     const allIds = next.map((placement) => placement.tileId)
-    if (allIds.some((tileId) => !allowed.has(tileId)) || new Set(allIds).size !== allIds.length) return false
-    if (current.baseline.placements.some((baseline) => !allIds.includes(baseline.tileId))) return false
+    const allIdSet = new Set(allIds)
+    if (allIds.some((tileId) => !allowed.has(tileId)) || allIdSet.size !== allIds.length) return false
+    if (current.baseline.placements.some((baseline) => !allIdSet.has(baseline.tileId))) return false
     if (!isTableTilePlacementLayoutValid(next) || samePlacements(before, next)) return false
     current.history.push({
       placements: before,

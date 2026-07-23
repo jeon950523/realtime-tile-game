@@ -4,11 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import GameBoard from '@/components/game/GameBoard.vue'
 import WorkingTableBoard from '@/components/game/WorkingTableBoard.vue'
-import { useWorkingTable } from '@/composables/game/useWorkingTable'
+import { committedMeldsToPlacements, useWorkingTable } from '@/composables/game/useWorkingTable'
 import {
   canPlaceTableBlockWithGutter,
-  flowCommittedTableMelds,
-  flowTableBlocks,
+  createTableCoordinateResolver,
   resolveNearestTableCoordinate,
   tableContentRows,
 } from '@/domain/game/tableFlow'
@@ -53,47 +52,41 @@ function placement(tileId: string, gridRow: number, gridColumn: number): Working
 }
 
 describe('Phase 7 production closeout table flow', () => {
-  it('P7-CLOSE-001 fully flows committed melds with a deterministic one-cell gutter', () => {
-    const flowed = flowCommittedTableMelds([
+  it('P7-CLOSE-001 preserves server-authoritative committed coordinates without a frontend reflow', () => {
+    const melds = [
       tableMeld('b-meld', [4, 5, 6], 7, 12, 1),
       tableMeld('a-meld', [1, 2, 3], 3, 9, 0),
       tableMeld('c-meld', [7, 8, 9], 9, 2, 2),
-    ])
+    ]
 
-    expect(flowed.map((meld) => [meld.meldId, meld.gridRow, meld.gridColumn])).toEqual([
-      ['a-meld', 0, 0],
-      ['b-meld', 0, 4],
-      ['c-meld', 0, 8],
+    expect(committedMeldsToPlacements(melds).map((item) => [
+      item.tileId,
+      item.gridRow,
+      item.gridColumn,
+    ])).toEqual([
+      ['RED-01-a', 3, 9],
+      ['RED-02-a', 3, 10],
+      ['RED-03-a', 3, 11],
+      ['RED-04-b', 7, 12],
+      ['RED-05-b', 7, 13],
+      ['RED-06-b', 7, 14],
+      ['RED-07-c', 9, 2],
+      ['RED-08-c', 9, 3],
+      ['RED-09-c', 9, 4],
     ])
   })
 
-  it('P7-CLOSE-002 flows 100 singleton blocks into finite extra rows without overlap or gutter violations', () => {
-    const flowed = flowTableBlocks(Array.from({ length: 100 }, (_, index) => ({
-      blockId: `block-${index}`,
-      tileIds: [`tile-${index}`],
-    })))
+  it('P7-CLOSE-002 reuses one occupied-cell snapshot for exact placement and gutter fallback', () => {
+    const stationary = [
+      placement('a', 0, 0), placement('b', 0, 1), placement('c', 0, 2),
+    ]
+    const resolver = createTableCoordinateResolver(stationary, ['x', 'y', 'z'])
 
-    expect(flowed).toHaveLength(100)
-    expect(Math.max(...flowed.map((block) => block.gridRow))).toBe(11)
-
-    const occupied = new Set<string>()
-    for (const block of flowed) {
-      const cell = `${block.gridRow}:${block.gridColumn}`
-      expect(occupied.has(cell)).toBe(false)
-      occupied.add(cell)
-    }
-    const byRow = new Map<number, typeof flowed>()
-    for (const block of flowed) {
-      const rowBlocks = byRow.get(block.gridRow) ?? []
-      rowBlocks.push(block)
-      byRow.set(block.gridRow, rowBlocks)
-    }
-    for (const rowBlocks of byRow.values()) {
-      const columns = rowBlocks.map((block) => block.gridColumn).sort((left, right) => left - right)
-      for (let index = 1; index < columns.length; index += 1) {
-        expect(columns[index]! - columns[index - 1]!).toBeGreaterThanOrEqual(2)
-      }
-    }
+    expect(resolver.occupiedCellCount).toBe(3)
+    expect(resolver.canPlaceWithGutter(0, 3)).toBe(false)
+    expect(resolver.resolveInteractive(0, 3)).toEqual({ gridRow: 0, gridColumn: 3 })
+    expect(resolver.resolveNearest(0, 2)).toEqual({ gridRow: 0, gridColumn: 4 })
+    expect(resolver.resolveNearest(0, 2)).toEqual({ gridRow: 0, gridColumn: 4 })
   })
 
   it('P7-CLOSE-003 nudges right then wraps to the next row and rejects coordinates outside the logical board', () => {
@@ -199,10 +192,10 @@ describe('Phase 7 production closeout table flow', () => {
 
     expect(working.moveTile('RED-03-a', 'b-meld', 3)).toBe(true)
     const moved = working.workingTable.value!.placements.find((item) => item.tileId === 'RED-03-a')
-    const target = working.workingTable.value!.melds.find((meld) => (
+    const target = working.candidates.value.find((meld) => (
       ['RED-04-b', 'RED-05-b', 'RED-06-b'].every((tileId) => meld.tileIds.includes(tileId))
     ))
-    const following = working.workingTable.value!.melds.find((meld) => (
+    const following = working.candidates.value.find((meld) => (
       ['RED-07-c', 'RED-08-c', 'RED-09-c'].every((tileId) => meld.tileIds.includes(tileId))
     ))
     expect(moved?.source).toBe('COMMITTED_TABLE')
@@ -227,7 +220,7 @@ describe('Phase 7 production closeout table flow', () => {
       isMyTurn: ref(true),
     }))!
 
-    const meldId = working.workingTable.value!.melds[0]!.clientMeldId
+    const meldId = working.candidates.value[0]!.clientMeldId
     for (let index = 0; index < 105; index += 1) {
       const row = index % 2 === 0 ? 2 : 3
       expect(working.moveMeld(meldId, row, 0)).toBe(true)

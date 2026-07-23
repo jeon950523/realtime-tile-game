@@ -4,86 +4,143 @@ import {
   TABLE_GRID_GUTTER_COLUMNS,
   TABLE_GRID_ROWS,
   TABLE_GRID_VISIBLE_ROWS,
-  canPlaceTableTiles,
   isTableGridCoordinateInBounds,
   type TableGridCoordinate,
   type TableGridTilePlacement,
 } from '@/domain/game/tableGrid'
-import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
-import type { GameTableMeld } from '@/types/game'
-import type { WorkingTilePlacement } from '@/types/turnDraft'
 
-export interface TableFlowBlock {
-  blockId: string
-  tileIds: readonly string[]
-  gridRow?: number
-  gridColumn?: number
+function tableCellKey(gridRow: number, gridColumn: number): string {
+  return `${gridRow}:${gridColumn}`
 }
 
-export interface FlowedTableBlock extends TableFlowBlock {
-  gridRow: number
-  gridColumn: number
+function createMovingTileSet(movingTileIds: readonly string[]): Set<string> | null {
+  if (movingTileIds.length === 0) return null
+  const moving = new Set(movingTileIds)
+  return moving.size === movingTileIds.length ? moving : null
 }
 
-export function flowTableBlocks(blocks: readonly TableFlowBlock[]): FlowedTableBlock[] {
-  let row = 0
-  let column = 0
-  const flowed: FlowedTableBlock[] = []
+function occupiedTableCells(
+  placements: readonly TableGridTilePlacement[],
+  movingTileIds: readonly string[],
+): ReadonlySet<string> | null {
+  const moving = createMovingTileSet(movingTileIds)
+  if (!moving) return null
+  return new Set(placements
+    .filter((placement) => !moving.has(placement.tileId))
+    .map((placement) => tableCellKey(placement.gridRow, placement.gridColumn)))
+}
 
-  blocks.forEach((block) => {
-    const tileCount = block.tileIds.length
-    if (tileCount === 0 || tileCount > TABLE_GRID_COLUMNS || row >= TABLE_GRID_ROWS) return
-    if (column > 0 && column + tileCount > TABLE_GRID_COLUMNS) {
-      row += 1
-      column = 0
+function canPlaceAgainstOccupied(
+  occupied: ReadonlySet<string>,
+  tileCount: number,
+  gridRow: number,
+  gridColumn: number,
+): boolean {
+  if (!isTableGridCoordinateInBounds(tileCount, gridRow, gridColumn)) return false
+  for (let offset = 0; offset < tileCount; offset += 1) {
+    if (occupied.has(tableCellKey(gridRow, gridColumn + offset))) return false
+  }
+  return true
+}
+
+function canPlaceWithGutterAgainstOccupied(
+  occupied: ReadonlySet<string>,
+  tileCount: number,
+  gridRow: number,
+  gridColumn: number,
+): boolean {
+  if (!isTableGridCoordinateInBounds(tileCount, gridRow, gridColumn)) return false
+  for (let offset = -TABLE_GRID_GUTTER_COLUMNS;
+    offset < tileCount + TABLE_GRID_GUTTER_COLUMNS;
+    offset += 1) {
+    const column = gridColumn + offset
+    if (column < 0 || column >= TABLE_GRID_COLUMNS) continue
+    if (occupied.has(tableCellKey(gridRow, column))) return false
+  }
+  return true
+}
+
+export interface TableCoordinateResolver {
+  readonly occupiedCellCount: number
+  canPlaceExact(gridRow: number, gridColumn: number): boolean
+  canPlaceWithGutter(gridRow: number, gridColumn: number): boolean
+  resolveNearest(requestedRow: number, requestedColumn: number): TableGridCoordinate | null
+  resolveInteractive(requestedRow: number, requestedColumn: number): TableGridCoordinate | null
+}
+
+/**
+ * Builds one immutable occupancy snapshot for a drag or mutation.
+ *
+ * Reusing this resolver avoids rebuilding the same occupied-cell Set for every
+ * scanned coordinate and every pointer-move frame.
+ */
+export function createTableCoordinateResolver(
+  placements: readonly TableGridTilePlacement[],
+  movingTileIds: readonly string[],
+): TableCoordinateResolver {
+  const occupied = occupiedTableCells(placements, movingTileIds)
+  const tileCount = movingTileIds.length
+
+  function canPlaceExact(gridRow: number, gridColumn: number): boolean {
+    return occupied !== null && canPlaceAgainstOccupied(
+      occupied,
+      tileCount,
+      gridRow,
+      gridColumn,
+    )
+  }
+
+  function canPlaceWithGutter(gridRow: number, gridColumn: number): boolean {
+    return occupied !== null && canPlaceWithGutterAgainstOccupied(
+      occupied,
+      tileCount,
+      gridRow,
+      gridColumn,
+    )
+  }
+
+  function resolveNearest(
+    requestedRow: number,
+    requestedColumn: number,
+  ): TableGridCoordinate | null {
+    if (occupied === null
+      || !Number.isInteger(requestedRow)
+      || !Number.isInteger(requestedColumn)
+      || requestedRow < 0
+      || requestedRow >= TABLE_GRID_ROWS
+      || requestedColumn < 0
+      || requestedColumn >= TABLE_GRID_COLUMNS) return null
+
+    for (let gridRow = requestedRow; gridRow < TABLE_GRID_ROWS; gridRow += 1) {
+      const firstColumn = gridRow === requestedRow ? requestedColumn : 0
+      for (let gridColumn = firstColumn;
+        gridColumn + tileCount <= TABLE_GRID_COLUMNS;
+        gridColumn += 1) {
+        if (canPlaceWithGutter(gridRow, gridColumn)) {
+          return { gridRow, gridColumn }
+        }
+      }
     }
-    if (row >= TABLE_GRID_ROWS) return
-    flowed.push({ ...block, gridRow: row, gridColumn: column })
-    column += tileCount + TABLE_GRID_GUTTER_COLUMNS
-    if (column >= TABLE_GRID_COLUMNS) {
-      row += 1
-      column = 0
-    }
-  })
-  return flowed
-}
+    return null
+  }
 
-export function flowCommittedTableMelds(melds: readonly GameTableMeld[]): GameTableMeld[] {
-  const ordered = [...melds].sort((left, right) => left.gridRow - right.gridRow
-    || left.gridColumn - right.gridColumn
-    || left.meldId.localeCompare(right.meldId))
-  const flowed = flowTableBlocks(ordered.map((meld) => ({
-    blockId: meld.meldId,
-    tileIds: [...meld.tiles]
-      .sort((left, right) => left.positionOrder - right.positionOrder)
-      .map((tile) => tile.tileId),
-  })))
-  const positionById = new Map(flowed.map((block) => [block.blockId, block]))
-  return ordered.map((meld) => {
-    const position = positionById.get(meld.meldId)
-    return {
-      ...meld,
-      gridRow: position?.gridRow ?? meld.gridRow,
-      gridColumn: position?.gridColumn ?? meld.gridColumn,
-      tiles: [...meld.tiles]
-        .sort((left, right) => left.positionOrder - right.positionOrder)
-        .map((tile, positionOrder) => ({ ...tile, positionOrder })),
+  function resolveInteractive(
+    requestedRow: number,
+    requestedColumn: number,
+  ): TableGridCoordinate | null {
+    if (canPlaceExact(requestedRow, requestedColumn)) {
+      return { gridRow: requestedRow, gridColumn: requestedColumn }
     }
-  })
-}
+    return resolveNearest(requestedRow, requestedColumn)
+  }
 
-export function flowWorkingPlacements(placements: readonly WorkingTilePlacement[]): WorkingTilePlacement[] {
-  const candidates = deriveTableCandidates(placements)
-  const flowed = flowTableBlocks(candidates.map((candidate) => ({
-    blockId: candidate.clientCandidateId,
-    tileIds: candidate.tileIds,
-  })))
-  const metadata = new Map(placements.map((placement) => [placement.tileId, placement]))
-  return flowed.flatMap((block) => block.tileIds.map((tileId, offset) => ({
-    ...metadata.get(tileId)!,
-    gridRow: block.gridRow,
-    gridColumn: block.gridColumn + offset,
-  })))
+  return {
+    occupiedCellCount: occupied?.size ?? 0,
+    canPlaceExact,
+    canPlaceWithGutter,
+    resolveNearest,
+    resolveInteractive,
+  }
 }
 
 export function tableContentRows(
@@ -103,27 +160,14 @@ export function canPlaceTableBlockWithGutter(
   gridRow: number,
   gridColumn: number,
 ): boolean {
-  if (!isTableGridCoordinateInBounds(movingTileIds.length, gridRow, gridColumn)) return false
-  const moving = new Set(movingTileIds)
-  if (moving.size !== movingTileIds.length) return false
-  const occupied = new Set(placements
-    .filter((placement) => !moving.has(placement.tileId))
-    .map((placement) => `${placement.gridRow}:${placement.gridColumn}`))
-  for (let offset = -TABLE_GRID_GUTTER_COLUMNS;
-    offset < movingTileIds.length + TABLE_GRID_GUTTER_COLUMNS;
-    offset += 1) {
-    const column = gridColumn + offset
-    if (column < 0 || column >= TABLE_GRID_COLUMNS) continue
-    if (occupied.has(`${gridRow}:${column}`)) return false
-  }
-  return true
+  return createTableCoordinateResolver(placements, movingTileIds)
+    .canPlaceWithGutter(gridRow, gridColumn)
 }
 
 /**
  * Resolves a drop deterministically without moving content upward or to the left.
  * The requested row is scanned from the requested column to the right, then the
- * following rows are scanned from column zero. This matches the visible
- * "nudge right, then wrap" table behaviour and avoids oscillating layouts.
+ * following rows are scanned from column zero.
  */
 export function resolveNearestTableCoordinate(
   placements: readonly TableGridTilePlacement[],
@@ -131,34 +175,13 @@ export function resolveNearestTableCoordinate(
   requestedRow: number,
   requestedColumn: number,
 ): TableGridCoordinate | null {
-  if (movingTileIds.length === 0
-    || !Number.isInteger(requestedRow)
-    || !Number.isInteger(requestedColumn)
-    || requestedRow < 0
-    || requestedRow >= TABLE_GRID_ROWS
-    || requestedColumn < 0
-    || requestedColumn >= TABLE_GRID_COLUMNS) return null
-
-  for (let gridRow = requestedRow; gridRow < TABLE_GRID_ROWS; gridRow += 1) {
-    const firstColumn = gridRow === requestedRow ? requestedColumn : 0
-    for (let gridColumn = firstColumn;
-      gridColumn + movingTileIds.length <= TABLE_GRID_COLUMNS;
-      gridColumn += 1) {
-      if (canPlaceTableBlockWithGutter(placements, movingTileIds, gridRow, gridColumn)) {
-        return { gridRow, gridColumn }
-      }
-    }
-  }
-  return null
+  return createTableCoordinateResolver(placements, movingTileIds)
+    .resolveNearest(requestedRow, requestedColumn)
 }
 
 /**
- * Resolves an explicit user drop without forcing a separator cell.
- *
- * A free requested coordinate is kept exactly so adjacent tiles become one
- * derived Candidate. Only an occupied/out-of-range requested coordinate falls
- * back to the deterministic gutter-aware nudge-right / wrap behaviour used by
- * automatic table flow.
+ * Keeps an explicit free user coordinate exactly so adjacent tiles derive one
+ * Candidate. Only an occupied coordinate falls back to gutter-aware nudge/wrap.
  */
 export function resolveInteractiveTableCoordinate(
   placements: readonly TableGridTilePlacement[],
@@ -166,20 +189,8 @@ export function resolveInteractiveTableCoordinate(
   requestedRow: number,
   requestedColumn: number,
 ): TableGridCoordinate | null {
-  if (canPlaceTableTiles(
-    placements,
-    movingTileIds,
-    requestedRow,
-    requestedColumn,
-  )) {
-    return { gridRow: requestedRow, gridColumn: requestedColumn }
-  }
-  return resolveNearestTableCoordinate(
-    placements,
-    movingTileIds,
-    requestedRow,
-    requestedColumn,
-  )
+  return createTableCoordinateResolver(placements, movingTileIds)
+    .resolveInteractive(requestedRow, requestedColumn)
 }
 
 export function firstAvailableTableCoordinateWithGutter(
@@ -187,12 +198,13 @@ export function firstAvailableTableCoordinateWithGutter(
   movingTileIds: readonly string[],
   preferredRow?: number,
 ): TableGridCoordinate | null {
+  const resolver = createTableCoordinateResolver(placements, movingTileIds)
   if (preferredRow !== undefined
     && Number.isInteger(preferredRow)
     && preferredRow >= 0
     && preferredRow < TABLE_GRID_ROWS) {
-    const preferred = resolveNearestTableCoordinate(placements, movingTileIds, preferredRow, 0)
+    const preferred = resolver.resolveNearest(preferredRow, 0)
     if (preferred) return preferred
   }
-  return resolveNearestTableCoordinate(placements, movingTileIds, 0, 0)
+  return resolver.resolveNearest(0, 0)
 }

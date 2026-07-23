@@ -31,6 +31,7 @@ import com.realtimetilegame.game.domain.rule.model.ValidatedTurn;
 import com.realtimetilegame.game.domain.rule.model.ValidationFailure;
 import com.realtimetilegame.game.domain.rule.model.ValidationResult;
 import com.realtimetilegame.game.domain.rule.model.ValidationSuccess;
+import com.realtimetilegame.game.domain.rule.policy.GameMode;
 import com.realtimetilegame.game.domain.rule.rearrangement.TableCandidateDeriver;
 import com.realtimetilegame.game.domain.rule.rearrangement.TableGridLayoutValidator;
 import com.realtimetilegame.game.domain.rule.turn.TurnCommitValidator;
@@ -104,6 +105,7 @@ public class GameTurnCommitService {
         List<CommitTableMeldCommand> candidate = deriveCandidateTable(
             placements, requester, existingMelds, tiles
         );
+        validateInitialMeldTableLock(game, requester, candidate, existingMelds, tiles);
         CommitTurnCommand normalizedCommand = new CommitTurnCommand(
             command.actionId(), command.gameVersion(), placements, candidate
         );
@@ -223,6 +225,43 @@ public class GameTurnCommitService {
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         if (!candidateTileIds.containsAll(baselineTableTileIds)) {
             throw new BusinessException(ErrorCode.INVALID_TABLE_LAYOUT);
+        }
+    }
+
+    private static void validateInitialMeldTableLock(
+        Game game,
+        GamePlayer requester,
+        List<CommitTableMeldCommand> candidate,
+        List<GameMeld> existingMelds,
+        List<GameTile> allTiles
+    ) {
+        if (game.gameMode() != GameMode.CLASSIC
+            || requester.initialMeldCompleted()
+            || existingMelds.isEmpty()) {
+            return;
+        }
+
+        Map<String, CommitTableMeldCommand> candidateById = new LinkedHashMap<>();
+        for (CommitTableMeldCommand submitted : candidate) {
+            if (candidateById.putIfAbsent(submitted.meldId(), submitted) != null) {
+                throw new BusinessException(ErrorCode.INVALID_TABLE_LAYOUT);
+            }
+        }
+
+        for (GameMeld existing : existingMelds) {
+            CommitTableMeldCommand submitted = candidateById.get(existing.meldId());
+            List<String> existingTileIds = allTiles.stream()
+                .filter(tile -> tile.location() == GameTileLocation.TABLE)
+                .filter(tile -> tile.meld() != null && tile.meld().id().equals(existing.id()))
+                .sorted(Comparator.comparingInt(GameTile::positionOrder))
+                .map(tile -> tile.tileId().value())
+                .toList();
+            if (submitted == null
+                || !submitted.tileIds().equals(existingTileIds)
+                || submitted.gridRow() != existing.gridRow()
+                || submitted.gridColumn() != existing.gridColumn()) {
+                throw new BusinessException(ErrorCode.INVALID_TABLE_LAYOUT);
+            }
         }
     }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import GameTile from '@/components/game/GameTile.vue'
 import {
@@ -8,19 +8,18 @@ import {
   TABLE_GRID_VISIBLE_ROWS,
   canPlaceTableTiles,
   clientPointToTableGridCoordinate,
-  isTableGridCoordinateInBounds,
   tableGridCellClientRect,
 } from '@/domain/game/tableGrid'
 import {
-  resolveInteractiveTableCoordinate,
+  createTableCoordinateResolver,
   tableContentRows,
+  type TableCoordinateResolver,
 } from '@/domain/game/tableFlow'
 import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
 import type { GameRackTile, GameTableMeld, GameTableTile } from '@/types/game'
 import type {
   DerivedTableCandidate,
   RackDropTarget,
-  ReadonlyWorkingMeld,
   TurnDraftValidation,
   WorkingTilePlacement,
 } from '@/types/turnDraft'
@@ -33,9 +32,7 @@ type ActiveTableDrag = (
 type TableDropPreview = { gridRow: number; gridColumn: number; tileCount: number; valid: boolean }
 
 const props = defineProps<{
-  placements?: readonly WorkingTilePlacement[]
-  /** Legacy derived view accepted for regression tests; production supplies placements. */
-  melds?: readonly ReadonlyWorkingMeld[]
+  placements: readonly WorkingTilePlacement[]
   rack: readonly GameRackTile[]
   baselineMelds: readonly ReadonlyTableMeld[]
   validation: TurnDraftValidation
@@ -62,36 +59,24 @@ let tableDragFrameId: number | null = null
 let autoScrollFrameId: number | null = null
 let edgeScrollDirection = 0
 let externalRackTileCount = 0
-let occupiedCellsDuringDrag: ReadonlySet<string> | null = null
+let activeCoordinateResolver: TableCoordinateResolver | null = null
+let externalCoordinateResolver: TableCoordinateResolver | null = null
 
 const tileById = computed(() => {
   const tiles: WorkingTile[] = [...props.rack, ...props.baselineMelds.flatMap((meld) => meld.tiles)]
   return new Map(tiles.map((tile) => [tile.tileId, tile]))
 })
-const candidates = computed<readonly (DerivedTableCandidate | ReadonlyWorkingMeld)[]>(() => (
-  props.placements ? deriveTableCandidates(props.placements) : props.melds ?? []
-))
-const effectivePlacements = computed<WorkingTilePlacement[]>(() => {
-  if (props.placements) return props.placements.map((placement) => ({ ...placement }))
-  return candidates.value.flatMap((candidate) => candidate.tileIds.map((tileId, offset) => ({
-    tileId,
-    gridRow: candidate.gridRow ?? 0,
-    gridColumn: (candidate.gridColumn ?? 0) + offset,
-    source: candidate.sourceMeldId ? 'COMMITTED_TABLE' as const : 'CURRENT_PLAYER_RACK' as const,
-    sourceMeldId: candidate.sourceMeldId ?? null,
-    originalPositionOrder: candidate.sourceMeldId ? offset : null,
-  })))
-})
-const contentRows = computed(() => tableContentRows(effectivePlacements.value))
+const candidates = computed<readonly DerivedTableCandidate[]>(() => deriveTableCandidates(props.placements))
+const contentRows = computed(() => tableContentRows(props.placements))
 const candidateByTileId = computed(() => {
-  const result = new Map<string, DerivedTableCandidate | ReadonlyWorkingMeld>()
+  const result = new Map<string, DerivedTableCandidate>()
   candidates.value.forEach((candidate) => {
     candidate.tileIds.forEach((tileId) => result.set(tileId, candidate))
   })
   return result
 })
 const placementByTileId = computed(() => new Map(
-  effectivePlacements.value.map((placement) => [placement.tileId, placement]),
+  props.placements.map((placement) => [placement.tileId, placement]),
 ))
 const externalGridPreview = computed(() => {
   const preview = props.rackDropPreview
@@ -102,7 +87,7 @@ const externalGridPreview = computed(() => {
     gridRow,
     gridColumn,
     tileCount: preview.tileCount,
-    valid: canPlaceTableTiles(effectivePlacements.value, movingIds, gridRow, gridColumn),
+    valid: canPlaceTableTiles(props.placements, movingIds, gridRow, gridColumn),
   }
 })
 const visibleDropPreview = computed(() => (
@@ -116,10 +101,10 @@ function tileStyle(placement: WorkingTilePlacement): Record<string, string> {
   }
 }
 
-function candidateStyle(candidate: ReadonlyWorkingMeld): Record<string, string> {
+function candidateStyle(candidate: DerivedTableCandidate): Record<string, string> {
   return {
-    '--table-grid-column': String(candidate.gridColumn ?? 0),
-    '--table-grid-row': String(candidate.gridRow ?? 0),
+    '--table-grid-column': String(candidate.gridColumn),
+    '--table-grid-row': String(candidate.gridRow),
     '--table-grid-span': String(Math.max(1, candidate.tileIds.length)),
   }
 }
@@ -143,15 +128,15 @@ function coordinateFromClient(clientX: number, clientY: number) {
   return rect ? clientPointToTableGridCoordinate(rect, clientX, clientY, contentRows.value) : null
 }
 
-function candidateForTile(tileId: string): ReadonlyWorkingMeld | null {
+function candidateForTile(tileId: string): DerivedTableCandidate | null {
   return candidateByTileId.value.get(tileId) ?? null
 }
 
-function candidateKind(candidate: ReadonlyWorkingMeld): 'RUN' | 'GROUP' | 'INVALID' {
+function candidateKind(candidate: DerivedTableCandidate): 'RUN' | 'GROUP' | 'INVALID' {
   return props.validation.melds[candidate.clientMeldId]?.kind ?? 'INVALID'
 }
 
-function candidateEditable(candidate: ReadonlyWorkingMeld): boolean {
+function candidateEditable(candidate: DerivedTableCandidate): boolean {
   if (props.disabled || !props.isMeldEditable(candidate.clientMeldId)) return false
   if (!props.initialMeldCompleted) {
     const hasCommittedTile = candidate.tileIds.some((tileId) => (
@@ -166,7 +151,7 @@ const editableCandidateIds = computed(() => new Set(candidates.value
   .filter((candidate) => candidateEditable(candidate))
   .map((candidate) => candidate.clientMeldId)))
 
-const renderedPlacements = computed(() => effectivePlacements.value.map((placement, index) => {
+const renderedPlacements = computed(() => props.placements.map((placement, index) => {
   const candidate = candidateByTileId.value.get(placement.tileId) ?? null
   return {
     placement,
@@ -175,33 +160,6 @@ const renderedPlacements = computed(() => effectivePlacements.value.map((placeme
   }
 }))
 
-function tableCellKey(gridRow: number, gridColumn: number): string {
-  return `${gridRow}:${gridColumn}`
-}
-
-function buildOccupiedCells(movingTileIds: readonly string[]): ReadonlySet<string> {
-  const moving = new Set(movingTileIds)
-  return new Set(effectivePlacements.value
-    .filter((placement) => !moving.has(placement.tileId))
-    .map((placement) => tableCellKey(placement.gridRow, placement.gridColumn)))
-}
-
-function ensureOccupiedCells(active: ActiveTableDrag): ReadonlySet<string> {
-  if (!occupiedCellsDuringDrag) occupiedCellsDuringDrag = buildOccupiedCells(active.movingTileIds)
-  return occupiedCellsDuringDrag
-}
-
-function canPlaceActiveDrag(active: ActiveTableDrag, gridRow: number, gridColumn: number): boolean {
-  if (!isTableGridCoordinateInBounds(active.movingTileIds.length, gridRow, gridColumn)
-    || new Set(active.movingTileIds).size !== active.movingTileIds.length) return false
-  ensureOccupiedCells(active)
-  return canPlaceTableTiles(
-    effectivePlacements.value,
-    active.movingTileIds,
-    gridRow,
-    gridColumn,
-  )
-}
 
 function sameDropPreview(left: TableDropPreview | null, right: TableDropPreview | null): boolean {
   if (left === right) return true
@@ -221,17 +179,14 @@ function calculateTableDropPreview(clientX: number, clientY: number): TableDropP
   const active = activeTableDrag.value
   const coordinate = coordinateFromClient(clientX, clientY)
   if (!active || !coordinate) return null
-  const resolved = resolveInteractiveTableCoordinate(
-    effectivePlacements.value,
-    active.movingTileIds,
-    coordinate.gridRow,
-    coordinate.gridColumn,
-  )
+  const resolver = activeCoordinateResolver
+    ?? createTableCoordinateResolver(props.placements, active.movingTileIds)
+  const resolved = resolver.resolveInteractive(coordinate.gridRow, coordinate.gridColumn)
   return {
     gridRow: resolved?.gridRow ?? coordinate.gridRow,
     gridColumn: resolved?.gridColumn ?? coordinate.gridColumn,
     tileCount: active.movingTileIds.length,
-    valid: resolved !== null && canPlaceActiveDrag(active, resolved.gridRow, resolved.gridColumn),
+    valid: resolved !== null,
   }
 }
 
@@ -242,8 +197,8 @@ function candidateTargetAt(clientX: number, clientY: number): Extract<RackDropTa
     if (!candidateEditable(candidate)) continue
     const rect = tableGridCellClientRect(
       boardRect,
-      candidate.gridRow ?? 0,
-      candidate.gridColumn ?? 0,
+      candidate.gridRow,
+      candidate.gridColumn,
       candidate.tileIds.length,
       contentRows.value,
     )
@@ -282,10 +237,11 @@ function calculateExternalRackPreview(
 ): TableDropPreview | null {
   const coordinate = coordinateFromClient(clientX, clientY)
   if (!coordinate || tileCount <= 0) return null
-  const movingIds = Array.from({ length: tileCount }, (_, index) => `rack-pointer:${index}`)
-  const resolved = resolveInteractiveTableCoordinate(
-    effectivePlacements.value,
-    movingIds,
+  if (!externalCoordinateResolver || externalRackTileCount !== tileCount) {
+    const movingIds = Array.from({ length: tileCount }, (_, index) => `rack-pointer:${index}`)
+    externalCoordinateResolver = createTableCoordinateResolver(props.placements, movingIds)
+  }
+  const resolved = externalCoordinateResolver.resolveInteractive(
     coordinate.gridRow,
     coordinate.gridColumn,
   )
@@ -357,7 +313,7 @@ function clearTableDragPerformanceState(): void {
   cancelTableDragFrame()
   cancelAutoScroll()
   pendingTableDragPoint = null
-  occupiedCellsDuringDrag = null
+  activeCoordinateResolver = null
 }
 
 function startTableDrag(placement: WorkingTilePlacement, event: DragEvent): void {
@@ -370,7 +326,7 @@ function startTableDrag(placement: WorkingTilePlacement, event: DragEvent): void
   const moveCandidate = event.shiftKey && candidate.tileIds.length > 1
   const movingTileIds = moveCandidate ? [...candidate.tileIds] : [placement.tileId]
   clearTableDragPerformanceState()
-  occupiedCellsDuringDrag = buildOccupiedCells(movingTileIds)
+  activeCoordinateResolver = createTableCoordinateResolver(props.placements, movingTileIds)
   if (moveCandidate) {
     event.dataTransfer.setData('application/x-working-meld-id', candidate.clientMeldId)
     event.dataTransfer.setData('text/plain', candidate.clientMeldId)
@@ -429,6 +385,7 @@ function handleGridDragLeave(event: DragEvent): void {
 function finishExternalRackDrag(): void {
   externalPointerPreview.value = null
   externalRackTileCount = 0
+  externalCoordinateResolver = null
   if (!activeTableDrag.value) {
     pendingTableDragPoint = null
     cancelAutoScroll()
@@ -438,6 +395,7 @@ function finishExternalRackDrag(): void {
 function resolveRackDropTarget(clientX: number, clientY: number, tileCount = 1): RackDropTarget {
   if (props.disabled || tileCount <= 0) return { kind: 'INVALID' }
   pendingTableDragPoint = { clientX, clientY }
+  if (externalRackTileCount !== tileCount) externalCoordinateResolver = null
   externalRackTileCount = tileCount
   updateEdgeAutoScroll(clientY)
 
@@ -477,13 +435,18 @@ function resolveRackDropTarget(clientX: number, clientY: number, tileCount = 1):
 function getTableDragPerformanceSnapshot() {
   return {
     movingTileIds: [...(activeTableDrag.value?.movingTileIds ?? [])],
-    occupiedCellCount: occupiedCellsDuringDrag?.size ?? 0,
+    occupiedCellCount: activeCoordinateResolver?.occupiedCellCount ?? 0,
     framePending: tableDragFrameId !== null,
     autoScrollFramePending: autoScrollFrameId !== null,
     preview: dropPreview.value,
     scrollTop: scrollViewportElement.value?.scrollTop ?? 0,
   }
 }
+
+watch(() => props.placements, () => {
+  finishTableDrag()
+  finishExternalRackDrag()
+})
 
 onBeforeUnmount(() => {
   finishTableDrag()

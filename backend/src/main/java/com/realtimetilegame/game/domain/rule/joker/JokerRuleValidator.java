@@ -130,10 +130,9 @@ public final class JokerRuleValidator {
         JokerAssignment startAssignment = startMeld.jokerAssignments().get(jokerId);
         JokerAssignment candidateAssignment = candidateMeld.jokerAssignments().get(jokerId);
         if (!Objects.equals(startAssignment, candidateAssignment)
-            || startMeld.meldType() != candidateMeld.meldType()
-            || startPlacement.jokerIndex() != candidatePlacement.jokerIndex()) {
-            return false;
-        }
+            || startMeld.meldType() != candidateMeld.meldType()) {
+                return false;
+            }
 
         if (startMeld.meldType() == MeldType.RUN) {
             return isOrderedSubsequence(

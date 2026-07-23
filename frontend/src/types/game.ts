@@ -108,12 +108,6 @@ export interface GameTerminatedPayload {
   serverTime: string
 }
 
-export interface CommitTableMeldCommand {
-  meldId: string
-  tileIds: string[]
-  gridRow: number
-  gridColumn: number
-}
 
 export interface CommitTilePlacementCommand {
   tileId: string
