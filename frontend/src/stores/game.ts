@@ -916,16 +916,22 @@ export const useGameStore = defineStore('game', {
       gameId: number
       roomId: number | null
       terminationReason: GameTerminatedPayload['terminationReason'] | null
+      winnerUserId?: number | null
     }): void {
+      const myUserId = this.privateState?.myUserId ?? null
       const notice = payload.terminationReason === 'PLAYER_LEFT'
         ? '플레이어 이탈로 게임이 중단되었습니다.'
         : payload.terminationReason === 'PLAYER_FORFEIT'
           ? '플레이어가 게임을 포기하여 게임이 종료되었습니다.'
-          : '게임 포기 및 나가기가 처리되었습니다.'
+          : payload.terminationReason === 'RACK_EXHAUSTED'
+            ? (payload.winnerUserId ?? null) === myUserId
+              ? '모든 Rack 타일을 소진하여 승리했습니다.'
+              : '상대 플레이어가 모든 Rack 타일을 소진하여 게임이 종료되었습니다.'
+            : '게임이 종료되었습니다.'
       if (this.terminalGameId === payload.gameId) {
         if (payload.roomId !== null) this.terminalRoomId = payload.roomId
-        this.terminationNotice = notice
-        this.lastMessage = notice
+        if (this.terminationNotice === null) this.terminationNotice = notice
+        if (this.lastMessage === null) this.lastMessage = this.terminationNotice
         return
       }
       this.terminalGameId = payload.gameId

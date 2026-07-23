@@ -21,10 +21,10 @@ import com.realtimetilegame.common.error.ErrorCode;
 import com.realtimetilegame.game.application.dto.CommitTableMeldCommand;
 import com.realtimetilegame.game.application.dto.CommitTilePlacementCommand;
 import com.realtimetilegame.game.application.dto.CommitTurnCommand;
-import com.realtimetilegame.game.application.dto.GamePlayerPublicView;
 import com.realtimetilegame.game.application.dto.GamePrivateState;
 import com.realtimetilegame.game.application.dto.GamePublicState;
 import com.realtimetilegame.game.application.dto.GameTurnCommandResult;
+import com.realtimetilegame.game.application.dto.GameTerminatedPayload;
 import com.realtimetilegame.game.application.dto.MeldsCommittedPayload;
 import com.realtimetilegame.game.domain.rule.model.ValidatedMeld;
 import com.realtimetilegame.game.domain.rule.model.ValidatedTurn;
@@ -46,6 +46,13 @@ import com.realtimetilegame.game.domain.session.GameTile;
 import com.realtimetilegame.game.domain.session.GameTileLocation;
 import com.realtimetilegame.game.domain.session.GameTileRepository;
 import com.realtimetilegame.game.event.GameTurnCommittedEvent;
+import com.realtimetilegame.room.application.RoomEventPublisher;
+import com.realtimetilegame.room.domain.Room;
+import com.realtimetilegame.room.domain.RoomPlayer;
+import com.realtimetilegame.room.domain.RoomPlayerRepository;
+import com.realtimetilegame.room.domain.RoomRepository;
+import com.realtimetilegame.room.event.RealtimeEvent;
+import com.realtimetilegame.room.event.RoomEventEnvelope;
 import com.realtimetilegame.user.domain.User;
 import com.realtimetilegame.user.domain.UserRepository;
 import com.realtimetilegame.user.domain.UserStatus;
@@ -60,26 +67,34 @@ public class GameTurnCommitService {
     private final GamePlayerRepository playerRepository;
     private final GameTileRepository tileRepository;
     private final GameMeldRepository meldRepository;
+    private final RoomRepository roomRepository;
+    private final RoomPlayerRepository roomPlayerRepository;
     private final GameTurnStateFactory stateFactory;
     private final TurnCommitValidator turnCommitValidator;
     private final GameStateAssembler stateAssembler;
     private final GameEventPublisher eventPublisher;
+    private final RoomEventPublisher roomEventPublisher;
     private final Clock clock;
 
     public GameTurnCommitService(UserRepository userRepository, GameRepository gameRepository,
                                  GamePlayerRepository playerRepository, GameTileRepository tileRepository,
-                                 GameMeldRepository meldRepository, GameTurnStateFactory stateFactory,
+                                 GameMeldRepository meldRepository, RoomRepository roomRepository,
+                                 RoomPlayerRepository roomPlayerRepository, GameTurnStateFactory stateFactory,
                                  TurnCommitValidator turnCommitValidator, GameStateAssembler stateAssembler,
-                                 GameEventPublisher eventPublisher, Clock clock) {
+                                 GameEventPublisher eventPublisher, RoomEventPublisher roomEventPublisher,
+                                 Clock clock) {
         this.userRepository = userRepository;
         this.gameRepository = gameRepository;
         this.playerRepository = playerRepository;
         this.tileRepository = tileRepository;
         this.meldRepository = meldRepository;
+        this.roomRepository = roomRepository;
+        this.roomPlayerRepository = roomPlayerRepository;
         this.stateFactory = stateFactory;
         this.turnCommitValidator = turnCommitValidator;
         this.stateAssembler = stateAssembler;
         this.eventPublisher = eventPublisher;
+        this.roomEventPublisher = roomEventPublisher;
         this.clock = clock;
     }
 
@@ -128,6 +143,15 @@ public class GameTurnCommitService {
         );
 
         if (validated.initialMeldCompletedAfterValidation()) requester.completeInitialMeld();
+        int rackCount = Math.toIntExact(tiles.stream()
+            .filter(tile -> tile.location() == GameTileLocation.RACK)
+            .filter(tile -> tile.owner() != null && tile.owner().id().equals(requester.id()))
+            .count());
+
+        if (rackCount == 0) {
+            return completeByRackExhaustion(game, players, requester, now);
+        }
+
         playerRepository.saveAllAndFlush(List.of(requester));
         GamePlayer nextPlayer = nextPlayer(players, game.currentTurnSeatOrder());
         game.advanceAfterMeld(
@@ -142,9 +166,6 @@ public class GameTurnCommitService {
         Map<Long, GamePrivateState> privateStates = stateAssembler.privateStates(
             game, players, committedTiles, committedMelds
         );
-        int rackCount = publicState.players().stream()
-            .filter(player -> player.userId() == requesterUserId)
-            .findFirst().map(GamePlayerPublicView::rackTileCount).orElseThrow();
         OffsetDateTime occurredAt = OffsetDateTime.of(now, ZoneOffset.UTC);
         eventPublisher.publish(new GameTurnCommittedEvent(
             game.id(), "MELDS_COMMITTED", occurredAt,
@@ -159,6 +180,49 @@ public class GameTurnCommitService {
                 game.consecutivePassCount()
             ),
             privateStates
+        ));
+        return new GameTurnCommandResult(game.id(), COMMIT, game.version());
+    }
+
+    private GameTurnCommandResult completeByRackExhaustion(Game game, List<GamePlayer> players,
+                                                            GamePlayer winner, LocalDateTime now) {
+        winner.winByRackExhaustion();
+        players.stream()
+            .filter(player -> !player.id().equals(winner.id()))
+            .forEach(GamePlayer::loseByRackExhaustion);
+
+        Room room = roomRepository.findByIdForUpdate(game.room().id())
+            .orElseThrow(() -> new BusinessException(ErrorCode.ROOM_NOT_FOUND));
+        List<RoomPlayer> activeRoomPlayers = roomPlayerRepository.findActiveByRoomIdForUpdate(room.id());
+        activeRoomPlayers.forEach(player -> player.leave(now));
+        room.close(now);
+        game.finishByRackExhaustion(winner.user(), now);
+
+        playerRepository.saveAllAndFlush(players);
+        roomPlayerRepository.saveAllAndFlush(activeRoomPlayers);
+        roomRepository.saveAndFlush(room);
+        gameRepository.saveAndFlush(game);
+
+        OffsetDateTime occurredAt = OffsetDateTime.of(now, ZoneOffset.UTC);
+        GameTerminatedPayload payload = new GameTerminatedPayload(
+            room.id(), game.id(), game.version(), room.status().name(), game.status().name(),
+            game.terminationReason().name(), null, null, winner.id(), winner.user().id(), occurredAt
+        );
+        eventPublisher.publish(new GameTurnCommittedEvent(
+            game.id(), "GAME_TERMINATED", occurredAt, payload, Map.of()
+        ));
+        roomEventPublisher.publish(new RoomEventEnvelope(
+            "/topic/rooms/" + room.id(),
+            new RealtimeEvent("ROOM_CLOSED", occurredAt, Map.of(
+                "roomId", room.id(),
+                "gameId", game.id(),
+                "terminationReason", game.terminationReason().name(),
+                "winnerUserId", winner.user().id()
+            ))
+        ));
+        roomEventPublisher.publish(new RoomEventEnvelope(
+            "/topic/lobby/rooms",
+            new RealtimeEvent("ROOM_REMOVED", occurredAt, Map.of("roomId", room.id()))
         ));
         return new GameTurnCommandResult(game.id(), COMMIT, game.version());
     }

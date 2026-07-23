@@ -242,6 +242,65 @@ describe('game store', () => {
     expect(realtime.disconnect).toHaveBeenCalledTimes(1)
   })
 
+  it('shows a victory notice when my final valid commit exhausts my Rack', () => {
+    const store = useGameStore()
+    store.privateState = structuredClone(fixture)
+    store.activeGameId = 33
+
+    store.applyGameEvent({
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '2026-07-23T06:00:00Z',
+      payload: {
+        roomId: 10,
+        gameId: 33,
+        gameVersion: 1,
+        roomStatus: 'CLOSED',
+        gameStatus: 'FINISHED',
+        terminationReason: 'RACK_EXHAUSTED',
+        exitedParticipantId: null,
+        exitedUserId: null,
+        winnerParticipantId: 100,
+        winnerUserId: 1,
+        serverTime: '2026-07-23T06:00:00Z',
+      },
+    })
+
+    expect(store.terminationNotice).toContain('승리')
+    expect(store.lastMessage).toContain('승리')
+    expect(store.activeGameId).toBeNull()
+    expect(store.privateState).toBeNull()
+    expect(store.terminalRevision).toBe(1)
+  })
+
+  it('shows an opponent Rack exhaustion notice to a losing player', () => {
+    const store = useGameStore()
+    store.privateState = structuredClone(fixture)
+    store.activeGameId = 33
+
+    store.applyGameEvent({
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '2026-07-23T06:00:00Z',
+      payload: {
+        roomId: 10,
+        gameId: 33,
+        gameVersion: 1,
+        roomStatus: 'CLOSED',
+        gameStatus: 'FINISHED',
+        terminationReason: 'RACK_EXHAUSTED',
+        exitedParticipantId: null,
+        exitedUserId: null,
+        winnerParticipantId: 101,
+        winnerUserId: 2,
+        serverTime: '2026-07-23T06:00:00Z',
+      },
+    })
+
+    expect(store.terminationNotice).toContain('상대 플레이어')
+    expect(store.terminationNotice).toContain('소진')
+    expect(store.terminationNotice).not.toContain('승리했습니다')
+    expect(store.terminalRevision).toBe(1)
+  })
+
   it('also cleans once when the successful reply arrives before the terminal broadcast', () => {
     const store = useGameStore()
     store.privateState = structuredClone(fixture)

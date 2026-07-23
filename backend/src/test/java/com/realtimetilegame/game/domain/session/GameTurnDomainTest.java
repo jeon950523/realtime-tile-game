@@ -123,6 +123,41 @@ class GameTurnDomainTest {
     }
 
     @Test
+    void rackExhaustionFinishesTheGameWithoutAdvancingTheTurn() {
+        Fixture fixture = fixture();
+        Game game = fixture.game();
+        int turnNumber = game.turnNumber();
+        String turnId = game.currentTurnId();
+        LocalDateTime finishedAt = STARTED_AT.plusSeconds(30);
+
+        game.finishByRackExhaustion(fixture.owner(), finishedAt);
+
+        assertThat(game.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(game.terminationReason()).isEqualTo(GameTerminationReason.RACK_EXHAUSTED);
+        assertThat(game.winnerUser()).isSameAs(fixture.owner());
+        assertThat(game.finishedAt()).isEqualTo(finishedAt);
+        assertThat(game.updatedAt()).isEqualTo(finishedAt);
+        assertThat(game.turnNumber()).isEqualTo(turnNumber);
+        assertThat(game.currentTurnId()).isEqualTo(turnId);
+        assertThatThrownBy(() -> game.advanceAfterMeld(
+            fixture.second(), 2, SECOND_TURN_ID, finishedAt.plusSeconds(1), 120
+        )).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void rackExhaustionMarksWinnerAndLoserParticipants() {
+        Fixture fixture = fixture();
+        GamePlayer winner = GamePlayer.snapshot(fixture.game(), fixture.owner(), 1, STARTED_AT);
+        GamePlayer loser = GamePlayer.snapshot(fixture.game(), fixture.second(), 2, STARTED_AT);
+
+        winner.winByRackExhaustion();
+        loser.loseByRackExhaustion();
+
+        assertThat(winner.participantStatus()).isEqualTo(GamePlayerStatus.WINNER);
+        assertThat(loser.participantStatus()).isEqualTo(GamePlayerStatus.LOSER);
+    }
+
+    @Test
     void meldTracksItsCreatorSeparatelyFromItsLastModifier() {
         Fixture fixture = fixture();
         GamePlayer creator = GamePlayer.snapshot(fixture.game(), fixture.owner(), 1, STARTED_AT);

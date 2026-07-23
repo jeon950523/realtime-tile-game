@@ -168,6 +168,16 @@ public class Game {
         this.updatedAt = finishedTime;
     }
 
+    public void finishByRackExhaustion(User winner, LocalDateTime now) {
+        requireInProgress();
+        LocalDateTime finishedTime = Objects.requireNonNull(now, "now must not be null");
+        this.status = GameStatus.FINISHED;
+        this.terminationReason = GameTerminationReason.RACK_EXHAUSTED;
+        this.winnerUser = Objects.requireNonNull(winner, "winner must not be null");
+        this.finishedAt = finishedTime;
+        this.updatedAt = finishedTime;
+    }
+
     private TurnRuntime validateNextTurn(User nextPlayer, int nextSeatOrder, String nextTurnId,
                                          LocalDateTime now, int turnTimeLimitSeconds) {
         User validatedPlayer = Objects.requireNonNull(nextPlayer, "nextPlayer must not be null");

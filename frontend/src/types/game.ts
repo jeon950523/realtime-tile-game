@@ -104,9 +104,9 @@ export interface GameTerminatedPayload {
   gameVersion: number
   roomStatus: 'CLOSED'
   gameStatus: 'FINISHED' | 'ABORTED'
-  terminationReason: 'PLAYER_FORFEIT' | 'PLAYER_LEFT'
-  exitedParticipantId: number
-  exitedUserId: number
+  terminationReason: 'PLAYER_FORFEIT' | 'PLAYER_LEFT' | 'RACK_EXHAUSTED'
+  exitedParticipantId: number | null
+  exitedUserId: number | null
   winnerParticipantId: number | null
   winnerUserId: number | null
   serverTime: string

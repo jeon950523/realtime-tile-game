@@ -28,6 +28,7 @@ import com.realtimetilegame.game.application.dto.CommitTurnCommand;
 import com.realtimetilegame.game.application.dto.CommitTableMeldCommand;
 import com.realtimetilegame.game.application.dto.CommitTilePlacementCommand;
 import com.realtimetilegame.game.application.dto.GamePrivateState;
+import com.realtimetilegame.game.application.dto.GameTerminatedPayload;
 import com.realtimetilegame.game.application.dto.GameStartResult;
 import com.realtimetilegame.game.application.dto.GameTurnCommandResult;
 import com.realtimetilegame.game.application.dto.MeldsCommittedPayload;
@@ -35,6 +36,9 @@ import com.realtimetilegame.game.domain.session.Game;
 import com.realtimetilegame.game.domain.session.GameMeldRepository;
 import com.realtimetilegame.game.domain.session.GamePlayer;
 import com.realtimetilegame.game.domain.session.GamePlayerRepository;
+import com.realtimetilegame.game.domain.session.GamePlayerStatus;
+import com.realtimetilegame.game.domain.session.GameStatus;
+import com.realtimetilegame.game.domain.session.GameTerminationReason;
 import com.realtimetilegame.game.domain.session.GameRepository;
 import com.realtimetilegame.game.event.GameTurnCommittedEvent;
 import com.realtimetilegame.room.application.RoomCommandService;
@@ -148,6 +152,69 @@ class GameTurnCommitIntegrationTest {
         GamePrivateState otherState = eventProbe.lastEvent().privateStates().get(next.user().id());
         assertThat(otherState.myRack()).extracting(tile -> tile.tileId()).doesNotContainAnyElementsOf(EXACT_THIRTY);
         assertThat(otherState.publicState().tableMelds()).isEqualTo(restored.publicState().tableMelds());
+    }
+
+    @Test
+    void beP7F001RackExhaustionFinishesTheGameAwardsTheWinnerAndReleasesTheRoom() {
+        StartedGame fixture = startedGame("rack-exhaustion");
+        Game before = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long requesterUserId = before.currentTurnUser().id();
+        GamePlayer winner = playerRepository.findByGameIdAndUserId(
+            fixture.gameId(), requesterUserId
+        ).orElseThrow();
+        GamePlayer loser = playerRepository.findByGameId(fixture.gameId()).stream()
+            .filter(player -> !player.id().equals(winner.id()))
+            .findFirst().orElseThrow();
+        arrangeRacks(fixture.gameId(), requesterUserId, EXACT_THIRTY);
+        retainOnlyRackTiles(fixture.gameId(), winner.id(), EXACT_THIRTY);
+
+        GameTurnCommandResult result = commitService.commit(
+            fixture.gameId(), requesterUserId,
+            command(before.version(),
+                meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3)),
+                meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6)))
+        );
+
+        Game after = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertThat(result.actionType()).isEqualTo(GameTurnCommitService.COMMIT);
+        assertThat(after.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(after.terminationReason()).isEqualTo(GameTerminationReason.RACK_EXHAUSTED);
+        assertThat(after.winnerUser().id()).isEqualTo(requesterUserId);
+        assertThat(after.turnNumber()).isEqualTo(before.turnNumber());
+        assertThat(after.currentTurnId()).isEqualTo(before.currentTurnId());
+        assertThat(after.version()).isEqualTo(before.version() + 1);
+        assertThat(rackCount(fixture.gameId(), winner.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT participant_status FROM game_players WHERE id = ?",
+            String.class, winner.id()
+        )).isEqualTo(GamePlayerStatus.WINNER.name());
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT participant_status FROM game_players WHERE id = ?",
+            String.class, loser.id()
+        )).isEqualTo(GamePlayerStatus.LOSER.name());
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM rooms WHERE id = (SELECT room_id FROM games WHERE id = ?)",
+            String.class, fixture.gameId()
+        )).isEqualTo("CLOSED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM room_players WHERE room_id = (SELECT room_id FROM games WHERE id = ?) AND left_at IS NULL",
+            Long.class, fixture.gameId()
+        )).isZero();
+        assertThat(queryService.activeGame(requesterUserId).active()).isFalse();
+        assertThat(queryService.activeGame(loser.user().id()).active()).isFalse();
+
+        assertThat(eventProbe.afterCommitCount()).isEqualTo(1);
+        assertThat(eventProbe.lastEvent().publicEventType()).isEqualTo("GAME_TERMINATED");
+        assertThat(eventProbe.lastEvent().privateStates()).isEmpty();
+        GameTerminatedPayload payload = (GameTerminatedPayload) eventProbe.lastEvent().publicPayload();
+        assertThat(payload.gameId()).isEqualTo(fixture.gameId());
+        assertThat(payload.gameStatus()).isEqualTo(GameStatus.FINISHED.name());
+        assertThat(payload.roomStatus()).isEqualTo("CLOSED");
+        assertThat(payload.terminationReason()).isEqualTo(GameTerminationReason.RACK_EXHAUSTED.name());
+        assertThat(payload.exitedParticipantId()).isNull();
+        assertThat(payload.exitedUserId()).isNull();
+        assertThat(payload.winnerParticipantId()).isEqualTo(winner.id());
+        assertThat(payload.winnerUserId()).isEqualTo(requesterUserId);
     }
 
     @Test
@@ -857,6 +924,25 @@ class GameTurnCommitIntegrationTest {
                 jdbcTemplate.update("UPDATE game_tiles SET location = 'POOL', owner_game_player_id = NULL, game_meld_id = NULL, position_order = ? WHERE game_id = ? AND tile_id = ?",
                     poolPosition++, gameId, tileId);
             }
+        }
+    }
+
+    private void retainOnlyRackTiles(long gameId, long gamePlayerId, List<String> retainedTileIds) {
+        List<String> rackTileIds = jdbcTemplate.queryForList(
+            "SELECT tile_id FROM game_tiles WHERE game_id = ? AND owner_game_player_id = ? AND location = 'RACK' ORDER BY position_order",
+            String.class, gameId, gamePlayerId
+        );
+        Integer nextPoolPosition = jdbcTemplate.queryForObject(
+            "SELECT COALESCE(MAX(position_order), -1) + 1 FROM game_tiles WHERE game_id = ? AND location = 'POOL'",
+            Integer.class, gameId
+        );
+        int poolPosition = nextPoolPosition == null ? 0 : nextPoolPosition;
+        for (String tileId : rackTileIds) {
+            if (retainedTileIds.contains(tileId)) continue;
+            jdbcTemplate.update(
+                "UPDATE game_tiles SET location = 'POOL', owner_game_player_id = NULL, game_meld_id = NULL, position_order = ? WHERE game_id = ? AND tile_id = ?",
+                poolPosition++, gameId, tileId
+            );
         }
     }
 

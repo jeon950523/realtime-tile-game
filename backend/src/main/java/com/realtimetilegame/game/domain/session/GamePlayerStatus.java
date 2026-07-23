@@ -4,5 +4,6 @@ public enum GamePlayerStatus {
     ACTIVE,
     FORFEITED,
     WINNER,
+    LOSER,
     ABORTED
 }

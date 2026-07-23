@@ -78,5 +78,7 @@ public class GamePlayer {
 
     public void forfeit() { this.participantStatus = GamePlayerStatus.FORFEITED; }
     public void winByForfeit() { this.participantStatus = GamePlayerStatus.WINNER; }
+    public void winByRackExhaustion() { this.participantStatus = GamePlayerStatus.WINNER; }
+    public void loseByRackExhaustion() { this.participantStatus = GamePlayerStatus.LOSER; }
     public void abort() { this.participantStatus = GamePlayerStatus.ABORTED; }
 }

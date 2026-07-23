@@ -9,8 +9,8 @@ public record GameTerminatedPayload(
     String roomStatus,
     String gameStatus,
     String terminationReason,
-    long exitedParticipantId,
-    long exitedUserId,
+    Long exitedParticipantId,
+    Long exitedUserId,
     Long winnerParticipantId,
     Long winnerUserId,
     OffsetDateTime serverTime
