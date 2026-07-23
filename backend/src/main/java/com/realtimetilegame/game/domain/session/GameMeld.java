@@ -52,6 +52,10 @@ public class GameMeld {
     @JoinColumn(name = "created_by_game_player_id", nullable = false, updatable = false)
     private GamePlayer createdBy;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "last_modified_by_game_player_id", nullable = false)
+    private GamePlayer lastModifiedBy;
+
     @Column(name = "created_at", nullable = false, columnDefinition = "DATETIME(6)", updatable = false)
     private LocalDateTime createdAt;
 
@@ -71,6 +75,7 @@ public class GameMeld {
         this.meldType = Objects.requireNonNull(meldType, "meldType must not be null");
         this.score = requireNonNegative(score, "score");
         this.createdBy = Objects.requireNonNull(createdBy, "createdBy must not be null");
+        this.lastModifiedBy = createdBy;
         if (!samePersistedGame(game, createdBy.game())) {
             throw new IllegalArgumentException("meld creator must belong to the same game");
         }
@@ -112,6 +117,16 @@ public class GameMeld {
         this.updatedAt = Objects.requireNonNull(now, "now must not be null");
     }
 
+
+    public void markLastModifiedBy(GamePlayer modifier, LocalDateTime now) {
+        GamePlayer requiredModifier = Objects.requireNonNull(modifier, "modifier must not be null");
+        if (!samePersistedGame(game, requiredModifier.game())) {
+            throw new IllegalArgumentException("meld modifier must belong to the same game");
+        }
+        this.lastModifiedBy = requiredModifier;
+        this.updatedAt = Objects.requireNonNull(now, "now must not be null");
+    }
+
     public Long id() { return id; }
     public Game game() { return game; }
     public String meldId() { return meldId; }
@@ -121,6 +136,7 @@ public class GameMeld {
     public MeldType meldType() { return meldType; }
     public int score() { return score; }
     public GamePlayer createdBy() { return createdBy; }
+    public GamePlayer lastModifiedBy() { return lastModifiedBy; }
     public LocalDateTime createdAt() { return createdAt; }
     public LocalDateTime updatedAt() { return updatedAt; }
 

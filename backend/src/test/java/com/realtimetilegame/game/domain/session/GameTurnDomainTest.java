@@ -123,6 +123,26 @@ class GameTurnDomainTest {
     }
 
     @Test
+    void meldTracksItsCreatorSeparatelyFromItsLastModifier() {
+        Fixture fixture = fixture();
+        GamePlayer creator = GamePlayer.snapshot(fixture.game(), fixture.owner(), 1, STARTED_AT);
+        GamePlayer modifier = GamePlayer.snapshot(fixture.game(), fixture.second(), 2, STARTED_AT);
+        GameMeld meld = GameMeld.committed(
+            fixture.game(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 0, MeldType.RUN, 24,
+            creator, STARTED_AT
+        );
+
+        assertThat(meld.createdBy()).isSameAs(creator);
+        assertThat(meld.lastModifiedBy()).isSameAs(creator);
+
+        meld.markLastModifiedBy(modifier, STARTED_AT.plusSeconds(3));
+
+        assertThat(meld.createdBy()).isSameAs(creator);
+        assertThat(meld.lastModifiedBy()).isSameAs(modifier);
+        assertThat(meld.updatedAt()).isEqualTo(STARTED_AT.plusSeconds(3));
+    }
+
+    @Test
     void ownedRackTileCommitsToAMeldInTheSameGame() {
         Fixture fixture = fixture();
         GamePlayer ownerPlayer = GamePlayer.snapshot(fixture.game(), fixture.owner(), 1, STARTED_AT);

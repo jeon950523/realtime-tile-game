@@ -2,16 +2,19 @@
 import { computed } from 'vue'
 
 import GameTile from '@/components/game/GameTile.vue'
+import { meldModifierStyle, normalizeMeldModifierSeat } from '@/domain/game/meldModifier'
+import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
 import { TABLE_GRID_COLUMNS, TABLE_GRID_ROWS, TABLE_GRID_VISIBLE_ROWS } from '@/domain/game/tableGrid'
 import { tableContentRows } from '@/domain/game/tableFlow'
 import { publicPreviewTileFromId } from '@/domain/game/turnPreview'
 import type { GameTableMeld, TurnPreviewSnapshot } from '@/types/game'
-import type { WorkingTilePlacement } from '@/types/turnDraft'
+import type { DerivedTableCandidate, WorkingTilePlacement } from '@/types/turnDraft'
 
 const props = defineProps<{
   preview: TurnPreviewSnapshot
   committedMelds: readonly GameTableMeld[]
   turnPlayerNickname: string
+  turnPlayerSeatOrder?: number
 }>()
 
 const committedMelds = computed(() => [...props.committedMelds]
@@ -38,7 +41,9 @@ const previewPlacements = computed<WorkingTilePlacement[]>(() => props.preview.t
   .sort((left, right) => left.gridRow - right.gridRow
     || left.gridColumn - right.gridColumn
     || left.tileId.localeCompare(right.tileId)))
+const previewCandidates = computed(() => deriveTableCandidates(previewPlacements.value))
 const contentRows = computed(() => tableContentRows(previewPlacements.value))
+
 function tileStyle(placement: { gridRow: number; gridColumn: number }): Record<string, string> {
   return {
     '--table-grid-column': String(placement.gridColumn),
@@ -49,6 +54,34 @@ function tileStyle(placement: { gridRow: number; gridColumn: number }): Record<s
 function placementChanged(placement: { tileId: string; gridRow: number; gridColumn: number }): boolean {
   return committedCoordinates.value.get(placement.tileId)
     !== `${placement.gridRow}:${placement.gridColumn}`
+}
+
+function matchingCommittedMeld(candidate: DerivedTableCandidate): GameTableMeld | null {
+  return committedMelds.value.find((meld) => {
+    const tileIds = [...meld.tiles]
+      .sort((left, right) => left.positionOrder - right.positionOrder)
+      .map((tile) => tile.tileId)
+    return meld.gridRow === candidate.gridRow
+      && meld.gridColumn === candidate.gridColumn
+      && tileIds.length === candidate.tileIds.length
+      && tileIds.every((tileId, index) => tileId === candidate.tileIds[index])
+  }) ?? null
+}
+
+function candidateModifierSeat(candidate: DerivedTableCandidate): number | null {
+  const committed = matchingCommittedMeld(candidate)
+  return normalizeMeldModifierSeat(
+    committed?.lastModifiedBySeatOrder ?? props.turnPlayerSeatOrder,
+  )
+}
+
+function candidateStyle(candidate: DerivedTableCandidate): Record<string, string> {
+  return {
+    '--table-grid-column': String(candidate.gridColumn),
+    '--table-grid-row': String(candidate.gridRow),
+    '--table-grid-span': String(Math.max(1, candidate.tileIds.length)),
+    ...meldModifierStyle(candidateModifierSeat(candidate)),
+  }
 }
 </script>
 
@@ -69,6 +102,19 @@ function placementChanged(placement: { tileId: string; gridRow: number; gridColu
         :data-grid-columns="TABLE_GRID_COLUMNS"
         :style="{ '--table-content-rows': String(contentRows) }"
       >
+        <div
+          v-for="candidate in previewCandidates"
+          :key="`preview-outline-${candidate.clientMeldId}`"
+          class="turn-preview-meld-outline"
+          :style="candidateStyle(candidate)"
+          :data-preview-meld-outline="candidate.clientMeldId"
+          :data-last-modified-seat="candidateModifierSeat(candidate) ?? 'unknown'"
+        >
+          <span v-if="candidateModifierSeat(candidate)" aria-hidden="true">
+            S{{ candidateModifierSeat(candidate) }}
+          </span>
+        </div>
+
         <div
           v-for="(placement, index) in previewPlacements"
           :key="placement.tileId"

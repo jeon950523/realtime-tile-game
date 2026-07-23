@@ -151,22 +151,22 @@ class GamePersistenceConstraintIntegrationTest {
             "SELECT id FROM game_players WHERE game_id = ? AND user_id = ?", Long.class, result.gameId(), owner.id()
         );
         jdbcTemplate.update(
-            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, created_at, updated_at) "
-                + "VALUES (?, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 0, 0, 'RUN', 24, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            result.gameId(), creatorId
+            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, last_modified_by_game_player_id, created_at, updated_at) "
+                + "VALUES (?, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 0, 0, 'RUN', 24, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            result.gameId(), creatorId, creatorId
         );
         Long meldId = jdbcTemplate.queryForObject(
             "SELECT id FROM game_melds WHERE game_id = ? AND position_order = 0", Long.class, result.gameId()
         );
         assertThatThrownBy(() -> jdbcTemplate.update(
-            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, created_at, updated_at) "
-                + "VALUES (?, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, 0, 13, 'GROUP', 21, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            result.gameId(), creatorId
+            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, last_modified_by_game_player_id, created_at, updated_at) "
+                + "VALUES (?, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, 0, 13, 'GROUP', 21, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            result.gameId(), creatorId, creatorId
         )).isInstanceOf(DataAccessException.class);
         assertThatThrownBy(() -> jdbcTemplate.update(
-            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, created_at, updated_at) "
-                + "VALUES (?, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 0, 1, 0, 'GROUP', 21, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            result.gameId(), creatorId
+            "INSERT INTO game_melds (game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, last_modified_by_game_player_id, created_at, updated_at) "
+                + "VALUES (?, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 0, 1, 0, 'GROUP', 21, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            result.gameId(), creatorId, creatorId
         )).isInstanceOf(DataAccessException.class);
 
         List<Long> tileRows = jdbcTemplate.queryForList(

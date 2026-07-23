@@ -387,6 +387,9 @@ public class GameTurnCommitService {
                 position, submitted.gridRow(), submitted.gridColumn(),
                 validMeld.meldType(), validMeld.score(), now
             );
+            if (changedIds.contains(submitted.meldId())) {
+                meld.markLastModifiedBy(requester, now);
+            }
             finalMelds.add(meld);
         }
         meldRepository.saveAllAndFlush(finalMelds);
@@ -414,7 +417,7 @@ public class GameTurnCommitService {
                 .filter(tile -> tile.meld().id().equals(baseline.id()))
                 .sorted(Comparator.comparingInt(GameTile::positionOrder))
                 .map(tile -> tile.tileId().value()).toList();
-            if (baseline.positionOrder() != position || !baselineTileIds.equals(submitted.tileIds())
+            if (!baselineTileIds.equals(submitted.tileIds())
                 || baseline.gridRow() != submitted.gridRow() || baseline.gridColumn() != submitted.gridColumn()
                 || baseline.meldType() != validated.meldType() || baseline.score() != validated.score()) {
                 changed.add(submitted.meldId());

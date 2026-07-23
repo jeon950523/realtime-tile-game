@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 import com.realtimetilegame.game.domain.session.GameMeld;
 
 interface SpringDataGameMeldJpaRepository extends JpaRepository<GameMeld, Long> {
-    @EntityGraph(attributePaths = {"game", "createdBy", "createdBy.user"})
+    @EntityGraph(attributePaths = {"game", "createdBy", "createdBy.user", "lastModifiedBy", "lastModifiedBy.user"})
     List<GameMeld> findByGameIdOrderByPositionOrderAsc(long gameId);
 
     long countByGameId(long gameId);

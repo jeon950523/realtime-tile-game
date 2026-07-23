@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import GameTile from '@/components/game/GameTile.vue'
+import { meldModifierStyle, normalizeMeldModifierSeat } from '@/domain/game/meldModifier'
 import {
   TABLE_GRID_COLUMNS,
   TABLE_GRID_ROWS,
@@ -16,7 +17,7 @@ import {
   type TableCoordinateResolver,
 } from '@/domain/game/tableFlow'
 import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
-import type { GameRackTile, GameTableMeld, GameTableTile } from '@/types/game'
+import type { GamePlayerPublicState, GameRackTile, GameTableMeld, GameTableTile } from '@/types/game'
 import type {
   DerivedTableCandidate,
   RackDropTarget,
@@ -39,6 +40,8 @@ const props = defineProps<{
   initialMeldCompleted: boolean
   isMeldEditable: (candidateId: string) => boolean
   rackDropPreview?: { target: RackDropTarget; tileCount: number } | null
+  mySeatOrder?: number
+  players?: readonly GamePlayerPublicState[]
   disabled?: boolean
 }>()
 
@@ -78,6 +81,12 @@ const candidateByTileId = computed(() => {
 const placementByTileId = computed(() => new Map(
   props.placements.map((placement) => [placement.tileId, placement]),
 ))
+const baselineMeldById = computed(() => new Map(
+  props.baselineMelds.map((meld) => [meld.meldId, meld]),
+))
+const playerBySeat = computed(() => new Map(
+  (props.players ?? []).map((player) => [player.seatOrder, player]),
+))
 const externalGridPreview = computed(() => {
   const preview = props.rackDropPreview
   if (!preview || preview.target.kind !== 'WORKING_NEW_MELD') return null
@@ -101,11 +110,42 @@ function tileStyle(placement: WorkingTilePlacement): Record<string, string> {
   }
 }
 
+function baselineMeld(candidate: DerivedTableCandidate): ReadonlyTableMeld | null {
+  return candidate.sourceMeldId ? baselineMeldById.value.get(candidate.sourceMeldId) ?? null : null
+}
+
+function candidateMatchesBaseline(candidate: DerivedTableCandidate, baseline: ReadonlyTableMeld): boolean {
+  const baselineTileIds = [...baseline.tiles]
+    .sort((left, right) => left.positionOrder - right.positionOrder)
+    .map((tile) => tile.tileId)
+  return candidate.gridRow === baseline.gridRow
+    && candidate.gridColumn === baseline.gridColumn
+    && candidate.tileIds.length === baselineTileIds.length
+    && candidate.tileIds.every((tileId, index) => tileId === baselineTileIds[index])
+}
+
+function candidateModifierSeat(candidate: DerivedTableCandidate): number | null {
+  const baseline = baselineMeld(candidate)
+  return baseline && candidateMatchesBaseline(candidate, baseline)
+    ? normalizeMeldModifierSeat(baseline.lastModifiedBySeatOrder)
+    : normalizeMeldModifierSeat(props.mySeatOrder)
+}
+
+function candidateModifierLabel(candidate: DerivedTableCandidate): string {
+  const seat = candidateModifierSeat(candidate)
+  if (!seat) return '마지막 수정자 정보 없음'
+  const player = playerBySeat.value.get(seat)
+  const baseline = baselineMeld(candidate)
+  const prefix = baseline && candidateMatchesBaseline(candidate, baseline) ? '마지막 수정' : '이번 수정 예정'
+  return `${prefix}: ${player?.nickname ?? `Seat ${seat}`}`
+}
+
 function candidateStyle(candidate: DerivedTableCandidate): Record<string, string> {
   return {
     '--table-grid-column': String(candidate.gridColumn),
     '--table-grid-row': String(candidate.gridRow),
     '--table-grid-span': String(Math.max(1, candidate.tileIds.length)),
+    ...meldModifierStyle(candidateModifierSeat(candidate)),
   }
 }
 
@@ -496,6 +536,7 @@ defineExpose({ resolveRackDropTarget, finishExternalRackDrag, getTableDragPerfor
           :key="`overlay-${candidate.clientMeldId}`"
           class="working-table-candidate-overlay"
           :class="{
+            'working-table-candidate-overlay--modifier': candidateKind(candidate) !== 'INVALID',
             'working-table-candidate-overlay--invalid': candidateKind(candidate) === 'INVALID',
             'working-table-grid__meld--drop-preview': rackDropPreview?.target.kind === 'WORKING_EXISTING_MELD'
               && rackDropPreview.target.meldId === candidate.clientMeldId,
@@ -503,8 +544,13 @@ defineExpose({ resolveRackDropTarget, finishExternalRackDrag, getTableDragPerfor
           :style="candidateStyle(candidate)"
           :data-derived-candidate="candidate.clientMeldId"
           :data-candidate-kind="candidateKind(candidate)"
-          aria-hidden="true"
-        />
+          :data-last-modified-seat="candidateModifierSeat(candidate) ?? 'unknown'"
+          :title="candidateModifierLabel(candidate)"
+        >
+          <span v-if="candidateModifierSeat(candidate)" aria-hidden="true">
+            S{{ candidateModifierSeat(candidate) }}
+          </span>
+        </div>
 
         <div
           v-for="rendered in renderedPlacements"

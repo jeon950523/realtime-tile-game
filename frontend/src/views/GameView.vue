@@ -378,6 +378,8 @@ function confirmExitActiveGame(): void {
             :is-meld-editable="turnDraft.isMeldEditable"
             :disabled="gameStore.commandInProgress"
             :rack-drop-preview="rackDropPreview"
+            :my-seat-order="state.mySeatOrder"
+            :players="publicState.players"
             @move-as-new="turnDraft.moveAsNewMeld"
             @move-meld="turnDraft.moveMeld"
             @move-to-meld="turnDraft.moveTile"
@@ -388,8 +390,13 @@ function confirmExitActiveGame(): void {
             :preview="gameStore.turnPreview"
             :committed-melds="publicState.tableMelds"
             :turn-player-nickname="currentTurnPlayer?.nickname ?? '상대 플레이어'"
+            :turn-player-seat-order="currentTurnPlayer?.seatOrder"
           />
-          <CommittedTableBoard v-else :melds="publicState.tableMelds" />
+          <CommittedTableBoard
+            v-else
+            :melds="publicState.tableMelds"
+            :players="publicState.players"
+          />
         </div>
       </template>
 

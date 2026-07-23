@@ -128,6 +128,11 @@ class GameTurnCommitIntegrationTest {
         assertThat(restored.publicState().tableMelds().get(0).gridColumn()).isZero();
         assertThat(restored.publicState().tableMelds().get(1).gridRow()).isZero();
         assertThat(restored.publicState().tableMelds().get(1).gridColumn()).isEqualTo(13);
+        assertThat(restored.publicState().tableMelds())
+            .allSatisfy(meld -> {
+                assertThat(meld.lastModifiedByUserId()).isEqualTo(requesterId);
+                assertThat(meld.lastModifiedBySeatOrder()).isEqualTo(requester.seatOrder());
+            });
         assertThat(restored.myRack()).extracting(tile -> tile.tileId()).doesNotContainAnyElementsOf(EXACT_THIRTY);
 
         assertThat(eventProbe.afterCommitCount()).isEqualTo(1);
@@ -355,8 +360,8 @@ class GameTurnCommitIntegrationTest {
             List.of(baseline(meldId, "RUN", 30, List.of("RED-09-A", "RED-10-A", "RED-11-A"))),
             List.of("RED-12-A"));
         jdbcTemplate.update(
-            "UPDATE game_melds SET created_by_game_player_id = ? WHERE game_id = ? AND meld_id = ?",
-            originalCreator.id(), fixture.gameId(), meldId
+            "UPDATE game_melds SET created_by_game_player_id = ?, last_modified_by_game_player_id = ? WHERE game_id = ? AND meld_id = ?",
+            originalCreator.id(), originalCreator.id(), fixture.gameId(), meldId
         );
         long creatorRackBefore = rackCount(fixture.gameId(), originalCreator.id());
         long requesterRackBefore = rackCount(fixture.gameId(), requester.id());
@@ -703,6 +708,113 @@ class GameTurnCommitIntegrationTest {
                 .containsExactly("RED-03-A", "JOKER-A", "RED-05-A"));
     }
 
+    @Test
+    void beP7E001OnlyActuallyChangedMeldReceivesTheCurrentPlayersModifierMetadata() {
+        StartedGame fixture = startedGame("meld-last-modifier");
+        Game beforeFirstCommit = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long firstUserId = beforeFirstCommit.currentTurnUser().id();
+        GamePlayer first = playerRepository.findByGameIdAndUserId(fixture.gameId(), firstUserId).orElseThrow();
+        arrangeRacks(fixture.gameId(), firstUserId, EXACT_THIRTY);
+        commitService.commit(fixture.gameId(), firstUserId, commandWithLayout(beforeFirstCommit.version(), List.of(
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3), 4, 0),
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6), 4, 13)
+        )));
+
+        var firstCommittedTable = queryService.privateState(fixture.gameId(), firstUserId).publicState().tableMelds();
+        String extendedMeldId = firstCommittedTable.stream()
+            .filter(meld -> meld.tiles().stream().map(tile -> tile.tileId()).toList().equals(EXACT_THIRTY.subList(0, 3)))
+            .map(meld -> meld.meldId()).findFirst().orElseThrow();
+        String untouchedMeldId = firstCommittedTable.stream()
+            .filter(meld -> meld.tiles().stream().map(tile -> tile.tileId()).toList().equals(EXACT_THIRTY.subList(3, 6)))
+            .map(meld -> meld.meldId()).findFirst().orElseThrow();
+
+        Game beforeSecondCommit = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long secondUserId = beforeSecondCommit.currentTurnUser().id();
+        GamePlayer second = playerRepository.findByGameIdAndUserId(fixture.gameId(), secondUserId).orElseThrow();
+        jdbcTemplate.update("UPDATE game_players SET initial_meld_completed = TRUE WHERE id = ?", second.id());
+        moveTileToRackPreservingTable(fixture.gameId(), second.id(), "RED-10-A");
+
+        commitService.commit(fixture.gameId(), secondUserId, commandWithLayout(beforeSecondCommit.version(), List.of(
+            new CommitTableMeldCommand(extendedMeldId, List.of("RED-07-A", "RED-08-A", "RED-09-A", "RED-10-A"), 4, 0),
+            new CommitTableMeldCommand(untouchedMeldId, EXACT_THIRTY.subList(3, 6), 4, 13)
+        )));
+
+        var table = queryService.privateState(fixture.gameId(), secondUserId).publicState().tableMelds();
+        var extended = table.stream().filter(meld -> meld.meldId().equals(extendedMeldId)).findFirst().orElseThrow();
+        var untouched = table.stream().filter(meld -> meld.meldId().equals(untouchedMeldId)).findFirst().orElseThrow();
+        assertThat(extended.lastModifiedByUserId()).isEqualTo(secondUserId);
+        assertThat(extended.lastModifiedBySeatOrder()).isEqualTo(second.seatOrder());
+        assertThat(untouched.lastModifiedByUserId()).isEqualTo(firstUserId);
+        assertThat(untouched.lastModifiedBySeatOrder()).isEqualTo(first.seatOrder());
+    }
+
+    @Test
+    void beP7E003NewInitialMeldAboveExistingTableDoesNotRecolorUntouchedMelds() {
+        StartedGame fixture = startedGame("meld-order-only-modifier");
+        Game beforeFirstCommit = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long firstUserId = beforeFirstCommit.currentTurnUser().id();
+        GamePlayer first = playerRepository.findByGameIdAndUserId(fixture.gameId(), firstUserId).orElseThrow();
+        arrangeRacks(fixture.gameId(), firstUserId, EXACT_THIRTY);
+        commitService.commit(fixture.gameId(), firstUserId, commandWithLayout(beforeFirstCommit.version(), List.of(
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3), 4, 0),
+            new CommitTableMeldCommand(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6), 4, 13)
+        )));
+
+        var firstCommittedTable = queryService.privateState(fixture.gameId(), firstUserId).publicState().tableMelds();
+        String firstExistingId = firstCommittedTable.stream()
+            .filter(meld -> meld.tiles().stream().map(tile -> tile.tileId()).toList().equals(EXACT_THIRTY.subList(0, 3)))
+            .map(meld -> meld.meldId()).findFirst().orElseThrow();
+        String secondExistingId = firstCommittedTable.stream()
+            .filter(meld -> meld.tiles().stream().map(tile -> tile.tileId()).toList().equals(EXACT_THIRTY.subList(3, 6)))
+            .map(meld -> meld.meldId()).findFirst().orElseThrow();
+
+        Game beforeSecondCommit = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long secondUserId = beforeSecondCommit.currentTurnUser().id();
+        GamePlayer second = playerRepository.findByGameIdAndUserId(fixture.gameId(), secondUserId).orElseThrow();
+        List<String> secondInitialTiles = List.of(
+            "YELLOW-07-A", "YELLOW-08-A", "YELLOW-09-A",
+            "BLACK-01-A", "BLACK-02-A", "BLACK-03-A"
+        );
+        secondInitialTiles.forEach(tileId -> moveTileToRackPreservingTable(fixture.gameId(), second.id(), tileId));
+
+        String firstNewId = UUID.randomUUID().toString();
+        String secondNewId = UUID.randomUUID().toString();
+        commitService.commit(fixture.gameId(), secondUserId, commandWithLayout(beforeSecondCommit.version(), List.of(
+            new CommitTableMeldCommand(firstNewId, secondInitialTiles.subList(0, 3), 0, 0),
+            new CommitTableMeldCommand(secondNewId, secondInitialTiles.subList(3, 6), 0, 13),
+            new CommitTableMeldCommand(firstExistingId, EXACT_THIRTY.subList(0, 3), 4, 0),
+            new CommitTableMeldCommand(secondExistingId, EXACT_THIRTY.subList(3, 6), 4, 13)
+        )));
+
+        var table = queryService.privateState(fixture.gameId(), secondUserId).publicState().tableMelds();
+        assertThat(table.stream()
+            .filter(meld -> meld.meldId().equals(firstExistingId) || meld.meldId().equals(secondExistingId))
+            .toList())
+            .allSatisfy(meld -> {
+                assertThat(meld.lastModifiedByUserId()).isEqualTo(firstUserId);
+                assertThat(meld.lastModifiedBySeatOrder()).isEqualTo(first.seatOrder());
+            });
+        assertThat(table.stream()
+            .filter(meld -> !meld.meldId().equals(firstExistingId) && !meld.meldId().equals(secondExistingId))
+            .toList())
+            .hasSize(2)
+            .allSatisfy(meld -> {
+                assertThat(meld.lastModifiedByUserId()).isEqualTo(secondUserId);
+                assertThat(meld.lastModifiedBySeatOrder()).isEqualTo(second.seatOrder());
+            });
+    }
+
+    private void moveTileToRackPreservingTable(long gameId, long targetPlayerId, String tileId) {
+        Integer nextPosition = jdbcTemplate.queryForObject(
+            "SELECT COALESCE(MAX(position_order), -1) + 1 FROM game_tiles WHERE game_id = ? AND location = 'RACK' AND owner_game_player_id = ?",
+            Integer.class, gameId, targetPlayerId
+        );
+        jdbcTemplate.update(
+            "UPDATE game_tiles SET location = 'RACK', owner_game_player_id = ?, game_meld_id = NULL, position_order = ? WHERE game_id = ? AND tile_id = ?",
+            targetPlayerId, nextPosition, gameId, tileId
+        );
+    }
+
     private StartedGame startedGame(String prefix) {
         User owner = user(prefix + "-owner@example.com", prefix + "Owner");
         User second = user(prefix + "-second@example.com", prefix + "Second");
@@ -776,9 +888,9 @@ class GameTurnCommitIntegrationTest {
         for (int position = 0; position < tableMelds.size(); position++) {
             BaselineMeld meld = tableMelds.get(position);
             jdbcTemplate.update(
-                "INSERT INTO game_melds(game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "INSERT INTO game_melds(game_id, meld_id, position_order, grid_row, grid_column, meld_type, score, created_by_game_player_id, last_modified_by_game_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 gameId, meld.meldId(), position, position / 2, (position % 2) * 13,
-                meld.meldType(), meld.score(), requester.id());
+                meld.meldType(), meld.score(), requester.id(), requester.id());
             Long persistedMeldId = jdbcTemplate.queryForObject(
                 "SELECT id FROM game_melds WHERE game_id = ? AND meld_id = ?", Long.class, gameId, meld.meldId());
             for (int tilePosition = 0; tilePosition < meld.tileIds().size(); tilePosition++) {

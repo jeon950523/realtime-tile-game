@@ -22,6 +22,10 @@ export interface GameTableMeld {
   positionOrder: number
   gridRow: number
   gridColumn: number
+  /** Backend authoritative metadata. Optional only for rolling-upgrade compatibility. */
+  lastModifiedByUserId?: number
+  /** Seat 1-4 is the stable visual color key inside a game. */
+  lastModifiedBySeatOrder?: number
   tiles: GameTableTile[]
 }
 

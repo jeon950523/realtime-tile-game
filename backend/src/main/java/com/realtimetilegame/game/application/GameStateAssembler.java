@@ -149,6 +149,8 @@ public class GameStateAssembler {
             meld.positionOrder(),
             coordinate.gridRow(),
             coordinate.gridColumn(),
+            meld.lastModifiedBy().user().id(),
+            meld.lastModifiedBy().seatOrder(),
             meldTiles
         );
     }
@@ -217,6 +219,9 @@ public class GameStateAssembler {
             }
             if (!playerIds.contains(meld.createdBy().id())) {
                 throw new IllegalStateException("table meld creator must belong to the game");
+            }
+            if (meld.lastModifiedBy() == null || !playerIds.contains(meld.lastModifiedBy().id())) {
+                throw new IllegalStateException("table meld last modifier must belong to the game");
             }
             if (!meldIds.add(meld.id()) || !publicMeldIds.add(meld.meldId())) {
                 throw new IllegalStateException("table meld identifiers must be unique");

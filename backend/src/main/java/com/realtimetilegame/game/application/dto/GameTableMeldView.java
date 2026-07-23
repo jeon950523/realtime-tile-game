@@ -9,6 +9,8 @@ public record GameTableMeldView(
     int positionOrder,
     int gridRow,
     int gridColumn,
+    long lastModifiedByUserId,
+    int lastModifiedBySeatOrder,
     List<GameTableTileView> tiles
 ) {
     public GameTableMeldView {
