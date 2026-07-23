@@ -230,7 +230,7 @@ class JokerRuleValidatorTest {
     }
 
     @Test
-    void sameRoleWithChangedJokerIndexRequiresReplacement() {
+    void prefixInsertionDoesNotRetrieveJokerWhenItsResolvedRoleAndRelativeContextStayUnchanged() {
         TableState startTable = table(meld(
             "M1", id(TileColor.RED, 3), JOKER_A, id(TileColor.RED, 5), id(TileColor.RED, 6)
         ));
@@ -246,7 +246,25 @@ class JokerRuleValidatorTest {
             RackState.empty()
         );
 
-        assertFailure(validate(scenario, true), RuleErrorCode.INVALID_JOKER_REPLACEMENT);
+        assertThat(success(scenario, true).retrievedJokerIds()).isEmpty();
+    }
+
+    @Test
+    void prependingTenToElevenTwelveJokerKeepsJokerAsThirteenWithoutRetrieval() {
+        TableState startTable = table(meld(
+            "M1", id(TileColor.RED, 11), id(TileColor.RED, 12), JOKER_A
+        ));
+        TableState candidateTable = table(meld(
+            "M1", id(TileColor.RED, 10), id(TileColor.RED, 11), id(TileColor.RED, 12), JOKER_A
+        ));
+        Scenario scenario = new Scenario(
+            startTable,
+            candidateTable,
+            rack(id(TileColor.RED, 10)),
+            RackState.empty()
+        );
+
+        assertThat(success(scenario, true).retrievedJokerIds()).isEmpty();
     }
 
     @Test

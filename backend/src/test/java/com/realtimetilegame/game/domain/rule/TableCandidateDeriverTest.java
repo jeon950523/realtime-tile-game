@@ -20,27 +20,44 @@ class TableCandidateDeriverTest {
             new TilePlacement("BLUE-10-A", 2, 5)
         ));
 
-        assertThat(result).singleElement().satisfies(candidate -> {
-            assertThat(candidate.gridRow()).isEqualTo(2);
-            assertThat(candidate.gridColumn()).isEqualTo(4);
-            assertThat(candidate.tileIds()).containsExactly("RED-10-A", "BLUE-10-A", "BLACK-10-A");
-        });
+        assertThat(result).hasSize(1);
+
+        /*
+         * Do not use AssertJ satisfies(candidate -> ...).
+         *
+         * The lambda creates a synthetic test-class method whose parameter type is
+         * TableCandidateDeriver.DerivedCandidate. JUnit discovery reflects over every
+         * declared method before tests run, so stale or partially rebuilt nested class
+         * output can abort the entire Jupiter engine before a single test executes.
+         *
+         * Reading the indexed result inside the test body keeps discovery independent
+         * from that synthetic lambda signature while still testing the public API.
+         */
+        var candidate = result.get(0);
+        assertThat(candidate.gridRow()).isEqualTo(2);
+        assertThat(candidate.gridColumn()).isEqualTo(4);
+        assertThat(candidate.tileIds())
+            .containsExactly("RED-10-A", "BLUE-10-A", "BLACK-10-A");
     }
 
     @Test
     void beP7Fix002AdjacentPlacementAutomaticallyMergesCandidates() {
-        assertThat(deriver.derive(List.of(
+        var result = deriver.derive(List.of(
             new TilePlacement("RED-10-A", 0, 0),
             new TilePlacement("BLUE-10-A", 0, 1),
             new TilePlacement("BLACK-10-A", 0, 2)
-        ))).hasSize(1);
+        ));
+
+        assertThat(result).hasSize(1);
     }
 
     @Test
     void beP7Fix003GapAutomaticallySplitsCandidates() {
-        assertThat(deriver.derive(List.of(
+        var result = deriver.derive(List.of(
             new TilePlacement("RED-10-A", 0, 0),
             new TilePlacement("BLACK-10-A", 0, 2)
-        ))).hasSize(2);
+        ));
+
+        assertThat(result).hasSize(2);
     }
 }

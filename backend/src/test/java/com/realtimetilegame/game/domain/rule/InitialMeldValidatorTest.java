@@ -162,7 +162,7 @@ class InitialMeldValidatorTest {
     @Test
     void init013RejectsChangedExistingMeldEvenWhenCandidateOrderChanges() {
         MeldState existing = meld("EXISTING", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 3));
-        MeldState changed = meld("EXISTING", id(TileColor.BLACK, 1), id(TileColor.BLACK, 2), id(TileColor.BLACK, 4));
+        MeldState changed = meld("EXISTING", id(TileColor.BLACK, 2), id(TileColor.BLACK, 3), id(TileColor.BLACK, 4));
         MeldState run = meld("RUN", id(TileColor.RED, 7), id(TileColor.RED, 8), id(TileColor.RED, 9));
         MeldState group = meld("GROUP", id(TileColor.BLUE, 2), id(TileColor.YELLOW, 2), id(TileColor.BLACK, 2, "B"));
         List<TileId> contributed = concat(run.tileIds(), group.tileIds());
