@@ -4,6 +4,7 @@ import {
   TABLE_GRID_GUTTER_COLUMNS,
   TABLE_GRID_ROWS,
   TABLE_GRID_VISIBLE_ROWS,
+  canPlaceTableTiles,
   isTableGridCoordinateInBounds,
   type TableGridCoordinate,
   type TableGridTilePlacement,
@@ -149,6 +150,36 @@ export function resolveNearestTableCoordinate(
     }
   }
   return null
+}
+
+/**
+ * Resolves an explicit user drop without forcing a separator cell.
+ *
+ * A free requested coordinate is kept exactly so adjacent tiles become one
+ * derived Candidate. Only an occupied/out-of-range requested coordinate falls
+ * back to the deterministic gutter-aware nudge-right / wrap behaviour used by
+ * automatic table flow.
+ */
+export function resolveInteractiveTableCoordinate(
+  placements: readonly TableGridTilePlacement[],
+  movingTileIds: readonly string[],
+  requestedRow: number,
+  requestedColumn: number,
+): TableGridCoordinate | null {
+  if (canPlaceTableTiles(
+    placements,
+    movingTileIds,
+    requestedRow,
+    requestedColumn,
+  )) {
+    return { gridRow: requestedRow, gridColumn: requestedColumn }
+  }
+  return resolveNearestTableCoordinate(
+    placements,
+    movingTileIds,
+    requestedRow,
+    requestedColumn,
+  )
 }
 
 export function firstAvailableTableCoordinateWithGutter(

@@ -4,6 +4,7 @@ import { isTableTilePlacementLayoutValid } from '@/domain/game/tableGrid'
 import {
   firstAvailableTableCoordinateWithGutter,
   flowCommittedTableMelds,
+  resolveInteractiveTableCoordinate,
   resolveNearestTableCoordinate,
 } from '@/domain/game/tableFlow'
 import {
@@ -224,7 +225,7 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
     return mutate(sourceDisplayOrderIds, (placements) => {
       if (unique.some((tileId) => placements.some((placement) => placement.tileId === tileId))) return
       const requested = requestedGridRow !== undefined && requestedGridColumn !== undefined
-        ? resolveNearestTableCoordinate(placements, unique, requestedGridRow, requestedGridColumn)
+        ? resolveInteractiveTableCoordinate(placements, unique, requestedGridRow, requestedGridColumn)
         : firstDetachedCoordinate(placements, unique)
       if (!requested) return
       unique.forEach((tileId, offset) => placements.push(
@@ -400,7 +401,7 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
       const moving = placements.find((candidate) => candidate.tileId === tileId)
       if (!moving) return
       const coordinate = requestedGridRow !== undefined && requestedGridColumn !== undefined
-        ? resolveNearestTableCoordinate(placements, [tileId], requestedGridRow, requestedGridColumn)
+        ? resolveInteractiveTableCoordinate(placements, [tileId], requestedGridRow, requestedGridColumn)
         : firstDetachedCoordinate(placements, [tileId], sourceCandidate.gridRow)
       if (!coordinate) return
       moving.gridRow = coordinate.gridRow
@@ -412,7 +413,7 @@ export function useWorkingTable(options: UseWorkingTableOptions) {
     const current = workingTable.value
     const candidate = current ? candidateById(current.placements, candidateId) : null
     if (!current || !candidate || !isMeldEditable(candidateId)) return false
-    const coordinate = resolveNearestTableCoordinate(
+    const coordinate = resolveInteractiveTableCoordinate(
       current.placements,
       candidate.tileIds,
       gridRow,

@@ -6,13 +6,13 @@ import {
   TABLE_GRID_COLUMNS,
   TABLE_GRID_ROWS,
   TABLE_GRID_VISIBLE_ROWS,
+  canPlaceTableTiles,
   clientPointToTableGridCoordinate,
   isTableGridCoordinateInBounds,
   tableGridCellClientRect,
 } from '@/domain/game/tableGrid'
 import {
-  canPlaceTableBlockWithGutter,
-  resolveNearestTableCoordinate,
+  resolveInteractiveTableCoordinate,
   tableContentRows,
 } from '@/domain/game/tableFlow'
 import { deriveTableCandidates } from '@/domain/game/tableCandidateDerivation'
@@ -102,7 +102,7 @@ const externalGridPreview = computed(() => {
     gridRow,
     gridColumn,
     tileCount: preview.tileCount,
-    valid: canPlaceTableBlockWithGutter(effectivePlacements.value, movingIds, gridRow, gridColumn),
+    valid: canPlaceTableTiles(effectivePlacements.value, movingIds, gridRow, gridColumn),
   }
 })
 const visibleDropPreview = computed(() => (
@@ -195,7 +195,7 @@ function canPlaceActiveDrag(active: ActiveTableDrag, gridRow: number, gridColumn
   if (!isTableGridCoordinateInBounds(active.movingTileIds.length, gridRow, gridColumn)
     || new Set(active.movingTileIds).size !== active.movingTileIds.length) return false
   ensureOccupiedCells(active)
-  return canPlaceTableBlockWithGutter(
+  return canPlaceTableTiles(
     effectivePlacements.value,
     active.movingTileIds,
     gridRow,
@@ -221,7 +221,7 @@ function calculateTableDropPreview(clientX: number, clientY: number): TableDropP
   const active = activeTableDrag.value
   const coordinate = coordinateFromClient(clientX, clientY)
   if (!active || !coordinate) return null
-  const resolved = resolveNearestTableCoordinate(
+  const resolved = resolveInteractiveTableCoordinate(
     effectivePlacements.value,
     active.movingTileIds,
     coordinate.gridRow,
@@ -283,7 +283,7 @@ function calculateExternalRackPreview(
   const coordinate = coordinateFromClient(clientX, clientY)
   if (!coordinate || tileCount <= 0) return null
   const movingIds = Array.from({ length: tileCount }, (_, index) => `rack-pointer:${index}`)
-  const resolved = resolveNearestTableCoordinate(
+  const resolved = resolveInteractiveTableCoordinate(
     effectivePlacements.value,
     movingIds,
     coordinate.gridRow,
