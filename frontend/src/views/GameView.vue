@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import GameBoard from '@/components/game/GameBoard.vue'
 import CommittedTableBoard from '@/components/game/CommittedTableBoard.vue'
 import GameDebugPanel from '@/components/game/GameDebugPanel.vue'
+import GameResultModal from '@/components/game/GameResultModal.vue'
 import PlayerSeat from '@/components/game/PlayerSeat.vue'
 import RackToolbar from '@/components/game/RackToolbar.vue'
 import TileRack from '@/components/game/TileRack.vue'
@@ -30,6 +31,7 @@ const gameId = Number(route.params.gameId)
 const nowMs = ref(Date.now())
 const rackDropPreview = ref<{ target: RackDropTarget; tileCount: number } | null>(null)
 const exitConfirmationOpen = ref(false)
+const resultExitInProgress = ref(false)
 let terminalNavigationInProgress = false
 interface WorkingTableBoardApi {
   resolveRackDropTarget: (clientX: number, clientY: number, tileCount?: number) => RackDropTarget
@@ -248,10 +250,11 @@ watch(() => gameStore.pendingRecoveryRevision, () => {
 
 watch(() => gameStore.terminalRevision, async (revision) => {
   if (revision <= 0 || terminalNavigationInProgress) return
-  terminalNavigationInProgress = true
   exitConfirmationOpen.value = false
   turnDraft.cancel()
   rackDropPreview.value = null
+  if (gameStore.terminalResult?.gameId === gameId) return
+  terminalNavigationInProgress = true
   roomStore.clearTerminatedRoom(gameStore.terminalRoomId)
   try {
     await roomStore.loadRooms()
@@ -262,6 +265,22 @@ watch(() => gameStore.terminalRevision, async (revision) => {
     terminalNavigationInProgress = false
   }
 })
+
+async function leaveResultForLobby(): Promise<void> {
+  const result = gameStore.terminalResult
+  if (!result || resultExitInProgress.value) return
+  resultExitInProgress.value = true
+  try {
+    roomStore.clearTerminatedRoom(result.roomId)
+    await roomStore.loadRooms()
+    await roomStore.connectLobby()
+    roomStore.lastMessage = gameStore.terminationNotice
+    await router.replace('/lobby')
+    gameStore.acknowledgeTerminalResult()
+  } finally {
+    resultExitInProgress.value = false
+  }
+}
 
 watch(workingTablePreviewSignature, () => {
   if (!isMyTurn.value || gameStore.commandInProgress || !turnDraft.draft.value) {
@@ -510,9 +529,49 @@ function confirmExitActiveGame(): void {
       </section>
     </div>
 
-    <section v-if="!state || !publicState" class="game-loading" role="status">
+    <section
+      v-if="gameStore.terminalResult"
+      class="game-result-stage"
+      aria-hidden="true"
+    >
+      <span>GAME COMPLETE</span>
+      <p>최종 결과가 확정되었습니다.</p>
+    </section>
+
+    <GameResultModal
+      v-if="gameStore.terminalResult"
+      :result="gameStore.terminalResult"
+      :leaving="resultExitInProgress"
+      @leave-lobby="leaveResultForLobby"
+    />
+
+    <section v-else-if="!state || !publicState" class="game-loading" role="status">
       <span aria-hidden="true">RT</span>
       <p>게임 상태를 복구하는 중입니다.</p>
     </section>
   </main>
 </template>
+
+<style scoped>
+.game-result-stage {
+  display: grid;
+  min-height: calc(100dvh - 72px);
+  place-content: center;
+  gap: 10px;
+  color: rgb(210 228 249 / 70%);
+  background:
+    radial-gradient(circle at 50% 42%, rgb(35 91 157 / 34%), transparent 35%),
+    linear-gradient(160deg, #07172e, #020916);
+  text-align: center;
+}
+
+.game-result-stage span {
+  font-size: clamp(1.6rem, 5vw, 3.5rem);
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.game-result-stage p {
+  margin: 0;
+}
+</style>

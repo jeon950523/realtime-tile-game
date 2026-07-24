@@ -42,6 +42,7 @@ import com.realtimetilegame.game.domain.session.GameTerminationReason;
 import com.realtimetilegame.game.domain.session.GameRepository;
 import com.realtimetilegame.game.event.GameTurnCommittedEvent;
 import com.realtimetilegame.room.application.RoomCommandService;
+import com.realtimetilegame.room.event.RoomEventEnvelope;
 import com.realtimetilegame.support.DatabaseCleanup;
 import com.realtimetilegame.user.domain.User;
 import com.realtimetilegame.user.domain.UserRepository;
@@ -56,12 +57,15 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(GameTurnCommitIntegrationTest.CommitEventProbeConfiguration.class)
+@RecordApplicationEvents
 class GameTurnCommitIntegrationTest {
     private static final List<String> EXACT_THIRTY = List.of(
         "RED-07-A", "RED-08-A", "RED-09-A",
@@ -81,6 +85,7 @@ class GameTurnCommitIntegrationTest {
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired Clock clock;
     @Autowired CommitEventProbe eventProbe;
+    @Autowired ApplicationEvents applicationEvents;
 
     @BeforeEach
     void clear() {
@@ -109,6 +114,9 @@ class GameTurnCommitIntegrationTest {
         Game after = gameRepository.findById(fixture.gameId()).orElseThrow();
         assertThat(result.actionType()).isEqualTo("COMMIT");
         assertThat(result.gameVersion()).isEqualTo(before.version() + 1);
+        assertThat(after.status()).isEqualTo(GameStatus.IN_PROGRESS);
+        assertThat(after.terminationReason()).isNull();
+        assertThat(after.winnerUser()).isNull();
         assertThat(after.currentTurnUser().id()).isEqualTo(next.user().id());
         assertThat(after.turnNumber()).isEqualTo(before.turnNumber() + 1);
         assertThat(after.consecutivePassCount()).isZero();
@@ -141,6 +149,10 @@ class GameTurnCommitIntegrationTest {
 
         assertThat(eventProbe.afterCommitCount()).isEqualTo(1);
         assertThat(eventProbe.lastEvent().publicEventType()).isEqualTo("MELDS_COMMITTED");
+        assertThat(applicationEvents.stream(RoomEventEnvelope.class)
+            .map(envelope -> envelope.event().eventType())
+            .filter(eventType -> eventType.equals("ROOM_CLOSED") || eventType.equals("ROOM_REMOVED")))
+            .isEmpty();
         MeldsCommittedPayload payload = (MeldsCommittedPayload) eventProbe.lastEvent().publicPayload();
         assertThat(payload.initialMeldScore()).isEqualTo(30);
         assertThat(payload.initialMeldCompleted()).isTrue();
@@ -167,12 +179,12 @@ class GameTurnCommitIntegrationTest {
             .findFirst().orElseThrow();
         arrangeRacks(fixture.gameId(), requesterUserId, EXACT_THIRTY);
         retainOnlyRackTiles(fixture.gameId(), winner.id(), EXACT_THIRTY);
+        CommitTurnCommand finalCommit = command(before.version(),
+            meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3)),
+            meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6)));
 
         GameTurnCommandResult result = commitService.commit(
-            fixture.gameId(), requesterUserId,
-            command(before.version(),
-                meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3)),
-                meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6)))
+            fixture.gameId(), requesterUserId, finalCommit
         );
 
         Game after = gameRepository.findById(fixture.gameId()).orElseThrow();
@@ -215,6 +227,100 @@ class GameTurnCommitIntegrationTest {
         assertThat(payload.exitedUserId()).isNull();
         assertThat(payload.winnerParticipantId()).isEqualTo(winner.id());
         assertThat(payload.winnerUserId()).isEqualTo(requesterUserId);
+        assertThat(applicationEvents.stream(RoomEventEnvelope.class)
+            .map(envelope -> envelope.event().eventType())
+            .filter(eventType -> eventType.equals("ROOM_CLOSED") || eventType.equals("ROOM_REMOVED")))
+            .containsExactly("ROOM_CLOSED", "ROOM_REMOVED");
+
+        List<String> terminalTileState = tileState(fixture.gameId());
+        assertBusinessCode(() -> turnCommandService.draw(
+            fixture.gameId(), requesterUserId, after.version()
+        ), ErrorCode.GAME_NOT_IN_PROGRESS);
+        assertBusinessCode(() -> turnCommandService.pass(
+            fixture.gameId(), requesterUserId, after.version()
+        ), ErrorCode.GAME_NOT_IN_PROGRESS);
+        assertBusinessCode(() -> commitService.commit(
+            fixture.gameId(), requesterUserId, finalCommit
+        ), ErrorCode.GAME_NOT_IN_PROGRESS);
+        assertThat(tileState(fixture.gameId())).containsExactlyElementsOf(terminalTileState);
+        assertThat(eventProbe.afterCommitCount()).isEqualTo(1);
+    }
+
+    @Test
+    void beP7F002InvalidFinalMeldRollsBackWithoutSelectingAWinner() {
+        StartedGame fixture = startedGame("rack-exhaustion-invalid");
+        Game before = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long requesterUserId = before.currentTurnUser().id();
+        GamePlayer requester = playerRepository.findByGameIdAndUserId(
+            fixture.gameId(), requesterUserId
+        ).orElseThrow();
+        List<String> invalidRun = List.of("RED-07-A", "RED-08-A", "RED-10-A");
+        arrangeRacks(fixture.gameId(), requesterUserId, invalidRun);
+        retainOnlyRackTiles(fixture.gameId(), requester.id(), invalidRun);
+        List<String> beforeTiles = tileState(fixture.gameId());
+
+        assertBusinessCode(() -> commitService.commit(
+            fixture.gameId(), requesterUserId,
+            command(before.version(), meld(UUID.randomUUID().toString(), invalidRun))
+        ), ErrorCode.INVALID_MELD);
+
+        Game after = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertThat(after.status()).isEqualTo(GameStatus.IN_PROGRESS);
+        assertThat(after.terminationReason()).isNull();
+        assertThat(after.winnerUser()).isNull();
+        assertThat(after.version()).isEqualTo(before.version());
+        assertThat(rackCount(fixture.gameId(), requester.id())).isEqualTo(3);
+        assertThat(meldRepository.countByGameId(fixture.gameId())).isZero();
+        assertThat(tileState(fixture.gameId())).containsExactlyElementsOf(beforeTiles);
+        assertThat(eventProbe.afterCommitCount()).isZero();
+    }
+
+    @Test
+    void beP7F003ConcurrentFinalCommitsTransitionAndPublishTerminationExactlyOnce() throws Exception {
+        StartedGame fixture = startedGame("rack-exhaustion-race");
+        Game before = gameRepository.findById(fixture.gameId()).orElseThrow();
+        long requesterUserId = before.currentTurnUser().id();
+        GamePlayer requester = playerRepository.findByGameIdAndUserId(
+            fixture.gameId(), requesterUserId
+        ).orElseThrow();
+        arrangeRacks(fixture.gameId(), requesterUserId, EXACT_THIRTY);
+        retainOnlyRackTiles(fixture.gameId(), requester.id(), EXACT_THIRTY);
+        CommitTurnCommand finalCommit = command(before.version(),
+            meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(0, 3)),
+            meld(UUID.randomUUID().toString(), EXACT_THIRTY.subList(3, 6)));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        List<Object> outcomes;
+        try {
+            Future<Object> first = executor.submit(() -> outcome(
+                () -> commitService.commit(fixture.gameId(), requesterUserId, finalCommit)
+            ));
+            Future<Object> second = executor.submit(() -> outcome(
+                () -> commitService.commit(fixture.gameId(), requesterUserId, finalCommit)
+            ));
+            outcomes = List.of(first.get(8, TimeUnit.SECONDS), second.get(8, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(outcomes.stream().filter(GameTurnCommandResult.class::isInstance).count()).isEqualTo(1);
+        assertThat(outcomes.stream().filter(ErrorCode.class::isInstance).map(ErrorCode.class::cast))
+            .singleElement().isEqualTo(ErrorCode.GAME_NOT_IN_PROGRESS);
+        Game after = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertThat(after.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(after.terminationReason()).isEqualTo(GameTerminationReason.RACK_EXHAUSTED);
+        assertThat(after.version()).isEqualTo(before.version() + 1);
+        assertThat(rackCount(fixture.gameId(), requester.id())).isZero();
+        assertThat(playerRepository.findByGameId(fixture.gameId()))
+            .filteredOn(player -> player.participantStatus() == GamePlayerStatus.WINNER)
+            .singleElement()
+            .extracting(player -> player.user().id()).isEqualTo(requesterUserId);
+        assertThat(eventProbe.afterCommitCount()).isEqualTo(1);
+        assertThat(eventProbe.lastEvent().publicEventType()).isEqualTo("GAME_TERMINATED");
+        assertThat(applicationEvents.stream(RoomEventEnvelope.class)
+            .map(envelope -> envelope.event().eventType())
+            .filter(eventType -> eventType.equals("ROOM_CLOSED") || eventType.equals("ROOM_REMOVED")))
+            .containsExactly("ROOM_CLOSED", "ROOM_REMOVED");
     }
 
     @Test

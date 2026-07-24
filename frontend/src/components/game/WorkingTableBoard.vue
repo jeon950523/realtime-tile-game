@@ -498,10 +498,21 @@ defineExpose({ resolveRackDropTarget, finishExternalRackDrag, getTableDragPerfor
 
 <template>
   <section class="working-table-board" aria-label="로컬 Grid Working Table">
-    <header class="working-table-status" :class="{ 'working-table-status--invalid': validation.invalidCount > 0 }">
+    <header
+      class="working-table-status"
+      :class="{ 'working-table-status--invalid': !validation.canCommit }"
+    >
       <strong>Working Table</strong>
-      <p v-if="validation.invalidCount > 0">Commit 불가 · 유효하지 않은 조합 {{ validation.invalidCount }}개</p>
-      <p v-else>Commit 가능 · {{ validation.validCount }}개 조합 · Rack {{ validation.rackContributionCount }}장 사용</p>
+
+      <p v-if="!validation.canCommit">
+        Commit 불가 ·
+        {{ validation.reason ?? '턴 확정 조건을 충족하지 않았습니다.' }}
+      </p>
+
+      <p v-else>
+        Commit 가능 · {{ validation.validCount }}개 조합 ·
+        Rack {{ validation.rackContributionCount }}장 사용
+      </p>
     </header>
 
     <div

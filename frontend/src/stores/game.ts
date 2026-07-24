@@ -13,6 +13,7 @@ import type {
   GameConnectionState,
   GamePrivateState,
   GamePublicState,
+  GameResultSnapshot,
   GameTerminatedPayload,
   MeldsCommittedPayload,
   RealtimeGameEvent,
@@ -66,6 +67,7 @@ interface GameState {
   terminalRoomId: number | null
   terminalRevision: number
   terminationNotice: string | null
+  terminalResult: GameResultSnapshot | null
 }
 
 let realtimeClient: AuthenticatedStompClient | null = null
@@ -158,6 +160,7 @@ export const useGameStore = defineStore('game', {
     terminalRoomId: null,
     terminalRevision: 0,
     terminationNotice: null,
+    terminalResult: null,
   }),
 
   getters: {
@@ -239,6 +242,7 @@ export const useGameStore = defineStore('game', {
       if (active.active && active.gameId !== this.activeGameId) {
         this.invalidateReconnectRecovery()
         this.clearPendingCommand()
+        this.terminalResult = null
         this.privateStateLoaded = false
         this.privateStateVersion = -1
         if (this.privateState?.publicState.gameId !== active.gameId) this.privateState = null
@@ -281,6 +285,7 @@ export const useGameStore = defineStore('game', {
         this.privateState = normalizedState
         this.terminalGameId = null
         this.terminationNotice = null
+        this.terminalResult = null
         this.activeGameId = gameId
         this.privateStateLoaded = true
         this.privateStateVersion = normalizedState.publicState.gameVersion
@@ -918,7 +923,8 @@ export const useGameStore = defineStore('game', {
       terminationReason: GameTerminatedPayload['terminationReason'] | null
       winnerUserId?: number | null
     }): void {
-      const myUserId = this.privateState?.myUserId ?? null
+      const terminalState = this.privateState
+      const myUserId = terminalState?.myUserId ?? null
       const notice = payload.terminationReason === 'PLAYER_LEFT'
         ? '플레이어 이탈로 게임이 중단되었습니다.'
         : payload.terminationReason === 'PLAYER_FORFEIT'
@@ -937,9 +943,29 @@ export const useGameStore = defineStore('game', {
       this.terminalGameId = payload.gameId
       this.terminalRoomId = payload.roomId
       this.terminationNotice = notice
+      if (payload.terminationReason === 'RACK_EXHAUSTED') {
+        const winnerUserId = payload.winnerUserId ?? null
+        const winner = terminalState?.publicState.players.find(
+          (player) => player.userId === winnerUserId,
+        ) ?? null
+        this.terminalResult = {
+          gameId: payload.gameId,
+          roomId: payload.roomId,
+          terminationReason: 'RACK_EXHAUSTED',
+          winnerUserId,
+          winnerNickname: winner?.nickname ?? null,
+          winnerSeatOrder: winner?.seatOrder ?? null,
+          myUserId,
+          didIWin: winnerUserId !== null && winnerUserId === myUserId,
+        }
+      }
       this.clearActiveGameContext()
       this.lastMessage = notice
       this.terminalRevision += 1
+    },
+
+    acknowledgeTerminalResult(): void {
+      this.terminalResult = null
     },
 
     clearActiveGameContext(): void {
@@ -1011,6 +1037,7 @@ export const useGameStore = defineStore('game', {
       this.terminalRoomId = null
       this.terminalRevision = 0
       this.terminationNotice = null
+      this.terminalResult = null
     },
   },
 })

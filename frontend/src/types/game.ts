@@ -112,6 +112,16 @@ export interface GameTerminatedPayload {
   serverTime: string
 }
 
+export interface GameResultSnapshot {
+  gameId: number
+  roomId: number | null
+  terminationReason: 'RACK_EXHAUSTED'
+  winnerUserId: number | null
+  winnerNickname: string | null
+  winnerSeatOrder: number | null
+  myUserId: number | null
+  didIWin: boolean
+}
 
 export interface CommitTilePlacementCommand {
   tileId: string

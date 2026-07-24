@@ -4,19 +4,23 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as gameApi from '@/api/gameApi'
+import * as roomApi from '@/api/roomApi'
 import { resetGameStoreClientForTests, useGameStore } from '@/stores/game'
 import GameView from '@/views/GameView.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useRoomStore } from '@/stores/room'
 import type { GamePrivateState } from '@/types/game'
 
 const realtime = vi.hoisted(() => ({
   connectGame: vi.fn(async (_gameId: number) => undefined),
+  connectLobby: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
   publishDraw: vi.fn(),
   publishPass: vi.fn(),
   publishExitActiveGame: vi.fn(),
 }))
 vi.mock('@/api/gameApi')
+vi.mock('@/api/roomApi')
 vi.mock('@/realtime/authenticatedStompClient', () => ({
   AuthenticatedStompClient: class {
     constructor(private readonly options: { onStateChange: (state: string) => void }) {}
@@ -26,6 +30,7 @@ vi.mock('@/realtime/authenticatedStompClient', () => ({
       this.options.onStateChange('CONNECTED')
     }
 
+    connectLobby = realtime.connectLobby
     disconnect = realtime.disconnect
     isGameCommandReady = vi.fn(() => true)
     publishDraw = realtime.publishDraw
@@ -75,6 +80,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(gameApi.getGameState).mockResolvedValue(structuredClone(state))
   vi.mocked(gameApi.getActiveGame).mockResolvedValue({ active: true, gameId: 33, roomId: 10, status: 'IN_PROGRESS' })
+  vi.mocked(roomApi.getRooms).mockResolvedValue({ content: [], page: 0, size: 20, totalElements: 0 })
   const auth = useAuthStore()
   auth.authStatus = 'AUTHENTICATED'
   auth.accessToken = 'token'
@@ -94,6 +100,26 @@ async function mountGame() {
   const wrapper = mount(GameView, { global: { plugins: [router] } })
   await flushPromises()
   return wrapper
+}
+
+function rackExhaustedEvent(winnerUserId = 1) {
+  return {
+    eventType: 'GAME_TERMINATED',
+    occurredAt: '2026-07-23T06:00:00Z',
+    payload: {
+      roomId: 10,
+      gameId: 33,
+      gameVersion: 1,
+      roomStatus: 'CLOSED' as const,
+      gameStatus: 'FINISHED' as const,
+      terminationReason: 'RACK_EXHAUSTED' as const,
+      exitedParticipantId: null,
+      exitedUserId: null,
+      winnerParticipantId: winnerUserId === 1 ? 100 : 101,
+      winnerUserId,
+      serverTime: '2026-07-23T06:00:00Z',
+    },
+  }
 }
 
 describe('game view', () => {
@@ -319,6 +345,101 @@ describe('game view', () => {
     expect(wrapper.find('.player-seat--left').exists()).toBe(true)
     expect(wrapper.find('.player-seat--center').exists()).toBe(true)
     expect(wrapper.find('.player-seat--right').exists()).toBe(true)
+  })
+
+  it('keeps the game route and shows a blocking Rack result modal without a loading state', async () => {
+    const wrapper = await mountGame()
+    const store = useGameStore()
+    store.applyGameEvent(rackExhaustedEvent())
+    await flushPromises()
+
+    expect(store.activeGameId).toBeNull()
+    expect(store.privateState).toBeNull()
+    expect(store.terminalRevision).toBe(1)
+    expect(wrapper.vm.$route.fullPath).toBe('/games/33')
+    expect(wrapper.get('[data-testid="game-result-modal"]').text()).toContain('승리했습니다!')
+    expect(wrapper.get('[data-testid="game-result-modal"]').text()).toContain('owner님이 모든 Rack 타일을 소진했습니다.')
+    expect(wrapper.get('[data-testid="game-result-modal"]').text()).toContain('SEAT 1')
+    expect(wrapper.get('[data-testid="game-result-modal"]').text()).toContain('종료 사유 · Rack 소진')
+    expect(wrapper.find('.game-loading').exists()).toBe(false)
+    expect(wrapper.find('[data-action="draw"]').exists()).toBe(false)
+    expect(wrapper.find('.rack-toolbar').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="게임 포기 및 나가기"]').exists()).toBe(false)
+    expect(wrapper.get('[role="dialog"]').findAll('button')).toHaveLength(1)
+    expect(roomApi.getRooms).not.toHaveBeenCalled()
+    expect(realtime.connectLobby).not.toHaveBeenCalled()
+
+    await wrapper.get('.game-result-modal').trigger('click')
+    await wrapper.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[data-testid="game-result-modal"]').exists()).toBe(true)
+    expect(store.terminalResult).not.toBeNull()
+  })
+
+  it('shows the winner nickname to a losing player', async () => {
+    const wrapper = await mountGame()
+    const store = useGameStore()
+    store.applyGameEvent(rackExhaustedEvent(2))
+    await flushPromises()
+
+    const modal = wrapper.get('[data-testid="game-result-modal"]')
+    expect(modal.text()).toContain('게임 종료')
+    expect(modal.text()).toContain('guest님이 승리했습니다.')
+    expect(modal.text()).toContain('모든 Rack 타일을 먼저 소진했습니다.')
+    expect(modal.text()).toContain('SEAT 2')
+  })
+
+  it('moves to the lobby once only after the result button is clicked twice quickly', async () => {
+    const wrapper = await mountGame()
+    const store = useGameStore()
+    const roomStore = useRoomStore()
+    store.applyGameEvent(rackExhaustedEvent())
+    await flushPromises()
+
+    const leaveButton = wrapper.get('.game-result-modal__leave')
+    void leaveButton.trigger('click')
+    void leaveButton.trigger('click')
+    await flushPromises()
+
+    expect(roomApi.getRooms).toHaveBeenCalledTimes(1)
+    expect(realtime.connectLobby).toHaveBeenCalledTimes(1)
+    expect(wrapper.vm.$route.fullPath).toBe('/lobby')
+    expect(roomStore.lastMessage).toBe('모든 Rack 타일을 소진하여 승리했습니다.')
+    expect(store.terminalResult).toBeNull()
+  })
+
+  it('keeps PLAYER_FORFEIT on the existing immediate lobby flow', async () => {
+    const wrapper = await mountGame()
+    const store = useGameStore()
+    store.applyGameEvent({
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '',
+      payload: {
+        roomId: 10, gameId: 33, gameVersion: 1, roomStatus: 'CLOSED', gameStatus: 'FINISHED',
+        terminationReason: 'PLAYER_FORFEIT', exitedParticipantId: 100, exitedUserId: 1,
+        winnerParticipantId: 101, winnerUserId: 2, serverTime: '',
+      },
+    })
+    await flushPromises()
+
+    expect(store.terminalResult).toBeNull()
+    expect(wrapper.vm.$route.fullPath).toBe('/lobby')
+    expect(roomApi.getRooms).toHaveBeenCalledTimes(1)
+    expect(realtime.connectLobby).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves to the lobby after refresh when the terminated game is no longer active', async () => {
+    vi.mocked(gameApi.getGameState).mockRejectedValueOnce(new Error('GAME_NOT_IN_PROGRESS'))
+    vi.mocked(gameApi.getActiveGame).mockResolvedValueOnce({
+      active: false,
+      gameId: null,
+      roomId: null,
+      status: null,
+    })
+
+    const wrapper = await mountGame()
+
+    expect(wrapper.vm.$route.fullPath).toBe('/lobby')
+    expect(useGameStore().terminalResult).toBeNull()
   })
 
 })

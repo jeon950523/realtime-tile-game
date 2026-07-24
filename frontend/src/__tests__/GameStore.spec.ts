@@ -239,6 +239,7 @@ describe('game store', () => {
     expect(store.terminalRevision).toBe(1)
     expect(store.terminalRoomId).toBe(10)
     expect(store.terminationNotice).toContain('포기')
+    expect(store.terminalResult).toBeNull()
     expect(realtime.disconnect).toHaveBeenCalledTimes(1)
   })
 
@@ -265,11 +266,21 @@ describe('game store', () => {
       },
     })
 
-    expect(store.terminationNotice).toContain('승리')
-    expect(store.lastMessage).toContain('승리')
+    expect(store.terminationNotice).toBe('모든 Rack 타일을 소진하여 승리했습니다.')
+    expect(store.lastMessage).toBe('모든 Rack 타일을 소진하여 승리했습니다.')
     expect(store.activeGameId).toBeNull()
     expect(store.privateState).toBeNull()
     expect(store.terminalRevision).toBe(1)
+    expect(store.terminalResult).toEqual({
+      gameId: 33,
+      roomId: 10,
+      terminationReason: 'RACK_EXHAUSTED',
+      winnerUserId: 1,
+      winnerNickname: 'owner',
+      winnerSeatOrder: 1,
+      myUserId: 1,
+      didIWin: true,
+    })
   })
 
   it('shows an opponent Rack exhaustion notice to a losing player', () => {
@@ -295,9 +306,111 @@ describe('game store', () => {
       },
     })
 
-    expect(store.terminationNotice).toContain('상대 플레이어')
-    expect(store.terminationNotice).toContain('소진')
-    expect(store.terminationNotice).not.toContain('승리했습니다')
+    expect(store.terminationNotice).toBe('상대 플레이어가 모든 Rack 타일을 소진하여 게임이 종료되었습니다.')
+    expect(store.terminalRevision).toBe(1)
+    expect(store.terminalResult).toEqual({
+      gameId: 33,
+      roomId: 10,
+      terminationReason: 'RACK_EXHAUSTED',
+      winnerUserId: 2,
+      winnerNickname: 'guest',
+      winnerSeatOrder: 2,
+      myUserId: 1,
+      didIWin: false,
+    })
+  })
+
+  it('creates one immutable Rack exhaustion result when the terminal event is duplicated', () => {
+    const store = useGameStore()
+    store.privateState = structuredClone(fixture)
+    store.activeGameId = 33
+    const event = {
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '2026-07-23T06:00:00Z',
+      payload: {
+        roomId: 10,
+        gameId: 33,
+        gameVersion: 1,
+        roomStatus: 'CLOSED' as const,
+        gameStatus: 'FINISHED' as const,
+        terminationReason: 'RACK_EXHAUSTED' as const,
+        exitedParticipantId: null,
+        exitedUserId: null,
+        winnerParticipantId: 101,
+        winnerUserId: 2,
+        serverTime: '2026-07-23T06:00:00Z',
+      },
+    }
+
+    store.applyGameEvent(event)
+    const firstResult = { ...store.terminalResult! }
+    store.applyGameEvent(event)
+
+    expect(store.terminalResult).toEqual(firstResult)
+    expect(store.terminalRevision).toBe(1)
+  })
+
+  it('keeps the result snapshot until it is explicitly acknowledged and clears it for logout', () => {
+    const store = useGameStore()
+    store.privateState = structuredClone(fixture)
+    store.activeGameId = 33
+    store.applyGameEvent({
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '',
+      payload: {
+        roomId: 10, gameId: 33, gameVersion: 1, roomStatus: 'CLOSED', gameStatus: 'FINISHED',
+        terminationReason: 'RACK_EXHAUSTED', exitedParticipantId: null, exitedUserId: null,
+        winnerParticipantId: 100, winnerUserId: 1, serverTime: '',
+      },
+    })
+
+    expect(store.terminalResult).not.toBeNull()
+    store.acknowledgeTerminalResult()
+    expect(store.terminalResult).toBeNull()
+
+    store.terminalResult = {
+      gameId: 33, roomId: 10, terminationReason: 'RACK_EXHAUSTED',
+      winnerUserId: 1, winnerNickname: 'owner', winnerSeatOrder: 1, myUserId: 1, didIWin: true,
+    }
+    store.clearGameState()
+    expect(store.terminalResult).toBeNull()
+  })
+
+  it('creates the Rack result when an accepted final Commit reply arrives before termination', () => {
+    const store = useGameStore()
+    store.privateState = structuredClone(fixture)
+    store.activeGameId = 33
+    store.commandInProgress = true
+    store.pendingActionId = '12345678-1234-4234-8234-123456789012'
+    store.pendingBaseVersion = 0
+    store.pendingActionType = 'COMMIT'
+
+    store.applyGameCommandReply({
+      eventType: 'GAME_COMMAND_ACCEPTED',
+      actionId: '12345678-1234-4234-8234-123456789012',
+      accepted: true,
+      duplicate: false,
+      code: null,
+      message: 'Commit 완료',
+      gameId: 33,
+      actionType: 'COMMIT',
+      gameVersion: 1,
+    })
+    expect(store.privateState).not.toBeNull()
+
+    store.applyGameEvent({
+      eventType: 'GAME_TERMINATED',
+      occurredAt: '',
+      payload: {
+        roomId: 10, gameId: 33, gameVersion: 1, roomStatus: 'CLOSED', gameStatus: 'FINISHED',
+        terminationReason: 'RACK_EXHAUSTED', exitedParticipantId: null, exitedUserId: null,
+        winnerParticipantId: 100, winnerUserId: 1, serverTime: '',
+      },
+    })
+
+    expect(store.terminalResult?.winnerNickname).toBe('owner')
+    expect(store.terminalResult?.didIWin).toBe(true)
+    expect(store.pendingActionId).toBeNull()
     expect(store.terminalRevision).toBe(1)
   })
 
